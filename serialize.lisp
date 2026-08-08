@@ -11,17 +11,18 @@
 
 (let ((length-table #+sbcl (make-hash-table :synchronized t)
                     #+lispworks (make-hash-table :single-thread nil)
-                    #+ccl (make-hash-table :shared t)))
+                    #+ccl (make-hash-table :shared t)
+                    #+ecl (make-hash-table)))
   (defun encode-length (int)
     (declare (type integer int))
     (or (gethash int length-table)
-	(let* ((n-bytes (ceiling (integer-length int) 8))
-	       (original-int int)
-	       (vec (make-array (+ 1 n-bytes) :element-type '(unsigned-byte 8))))
-	  (setf (aref vec 0) n-bytes)
-	  (dotimes (i n-bytes)
-	    (setf (aref vec (+ 1 i)) (ldb (byte 8 (* i 8)) int)))
-	  (setf (gethash original-int length-table) vec)))))
+        (let* ((n-bytes (ceiling (integer-length int) 8))
+               (original-int int)
+               (vec (make-array (+ 1 n-bytes) :element-type '(unsigned-byte 8))))
+          (setf (aref vec 0) n-bytes)
+          (dotimes (i n-bytes)
+            (setf (aref vec (+ 1 i)) (ldb (byte 8 (* i 8)) int)))
+          (setf (gethash original-int length-table) vec)))))
 
 (defun decode-length (bytes)
   (declare (type (array (unsigned-byte 8)) bytes))
@@ -35,11 +36,11 @@
   (let ((id-byte (aref a 0)))
     (cond ((or (= id-byte +uuid+) ;; These are all fixed length
                (= id-byte +bit-vector+)
-	       (= id-byte +positive-integer+)
-	       (= id-byte +negative-integer+)
-	       (= id-byte +character+)
-	       (= id-byte +single-float+)
-	       (= id-byte +double-float+))
+               (= id-byte +positive-integer+)
+               (= id-byte +negative-integer+)
+               (= id-byte +character+)
+               (= id-byte +single-float+)
+               (= id-byte +double-float+))
            (values (aref a 1) 2))
           ((= id-byte +timestamp+)
            (values 24 1))
@@ -48,11 +49,11 @@
           ((or (= id-byte +vertex+)
                (= id-byte +edge+))
            (values -1 1))
-	  ((or (= id-byte +t+) (= id-byte +null+))
-	   (values 1 0))
-	  (t ;; strings, lists, vectors, blobs, nodes, triples have variable bytes
-	   (let ((header-length (+ 2 (aref a 1))))
-	     (values (decode-length (subseq a 2 header-length)) header-length))))))
+          ((or (= id-byte +t+) (= id-byte +null+))
+           (values 1 0))
+          (t ;; strings, lists, vectors, blobs, nodes, triples have variable bytes
+           (let ((header-length (+ 2 (aref a 1))))
+             (values (decode-length (subseq a 2 header-length)) header-length))))))
 
 (defun decode-length-mmap (mf n-bytes offset)
   (let ((int 0))
@@ -161,38 +162,38 @@
 (defun serialize-multiple (type-specifier &rest slots)
   (declare (type integer type-specifier))
   (let* ((serialized-slots (mapcar #'serialize slots))
-	 (serialized-slot-lengths (mapcar #'length serialized-slots))
-	 (total-length (apply #'+ serialized-slot-lengths))
-	 (encoded-length (encode-length total-length))
-	 (length-of-encoded-length (length encoded-length)))
+         (serialized-slot-lengths (mapcar #'length serialized-slots))
+         (total-length (apply #'+ serialized-slot-lengths))
+         (encoded-length (encode-length total-length))
+         (length-of-encoded-length (length encoded-length)))
     (declare (type fixnum total-length length-of-encoded-length))
     (declare (type (array (unsigned-byte 8)) encoded-length))
     (let ((a (make-array (+ 1 length-of-encoded-length total-length)
-			 :element-type '(unsigned-byte 8))))
+                         :element-type '(unsigned-byte 8))))
       (setf (aref a 0) type-specifier)
       (dotimes (i length-of-encoded-length)
-	(setf (aref a (1+ i)) (aref encoded-length i)))
+        (setf (aref a (1+ i)) (aref encoded-length i)))
       (dotimes (i (length serialized-slots))
-	(dotimes (j (nth i serialized-slot-lengths))
-	  (setf (aref a (+ 1
-			   length-of-encoded-length
-			   j
-			   (apply #'+ (subseq serialized-slot-lengths 0 i))))
-		(aref (nth i serialized-slots) j))))
+        (dotimes (j (nth i serialized-slot-lengths))
+          (setf (aref a (+ 1
+                           length-of-encoded-length
+                           j
+                           (apply #'+ (subseq serialized-slot-lengths 0 i))))
+                (aref (nth i serialized-slots) j))))
       a)))
 
 (defmethod make-slot-key (id slot-name)
   (if (symbolp slot-name) (setq slot-name (symbol-name slot-name)))
   (let* ((serialized-id (serialize id))
-	 (serialized-slot-name (serialize slot-name))
-	 (total-length (+ (length serialized-id) (length serialized-slot-name))))
+         (serialized-slot-name (serialize slot-name))
+         (total-length (+ (length serialized-id) (length serialized-slot-name))))
     (declare (type fixnum total-length))
     (let ((a (make-array (+ 1 total-length) :element-type '(unsigned-byte 8))))
       (setf (aref a 0) +slot-key+)
       (dotimes (i (length serialized-id))
-	(setf (aref a (1+ i)) (aref serialized-id i)))
+        (setf (aref a (1+ i)) (aref serialized-id i)))
       (dotimes (i (length serialized-slot-name))
-	(setf (aref a (+ 1 (length serialized-id) i))
+        (setf (aref a (+ 1 (length serialized-id) i))
               (aref serialized-slot-name i)))
       a)))
 
@@ -221,20 +222,20 @@
   (if (equal (array-element-type v) '(unsigned-byte 8))
       v
       (let* ((serialized-items (map 'list #'serialize v))
-	     (total-length (reduce #'+ serialized-items :key 'length))
-	     (encoded-length (encode-length total-length))
-	     (length-of-encoded-length (length encoded-length))
-	     (vec (make-array 0 :fill-pointer t :adjustable t
+             (total-length (reduce #'+ serialized-items :key 'length))
+             (encoded-length (encode-length total-length))
+             (length-of-encoded-length (length encoded-length))
+             (vec (make-array 0 :fill-pointer t :adjustable t
                               :element-type '(unsigned-byte 8))))
-	(declare (type fixnum total-length length-of-encoded-length))
-	(declare (type (array (unsigned-byte 8)) encoded-length))
-	(vector-push-extend +vector+ vec)
-	(dotimes (i length-of-encoded-length)
-	  (vector-push-extend (aref encoded-length i) vec))
-	(dolist (item serialized-items)
-	  (dotimes (i (length item))
-	    (vector-push-extend (aref item i) vec)))
-	vec)))
+        (declare (type fixnum total-length length-of-encoded-length))
+        (declare (type (array (unsigned-byte 8)) encoded-length))
+        (vector-push-extend +vector+ vec)
+        (dotimes (i length-of-encoded-length)
+          (vector-push-extend (aref encoded-length i) vec))
+        (dolist (item serialized-items)
+          (dotimes (i (length item))
+            (vector-push-extend (aref item i) vec)))
+        vec)))
 
 (defun bit-vector->integer (bit-vector)
   "Create a positive integer from a bit-vector."
@@ -269,8 +270,17 @@
   (uuid:byte-array-to-uuid bytes))
 
 (defmethod serialize ((uuid uuid:uuid))
-  "Encode a UUID."
-  (uuid:uuid-to-byte-array uuid +uuid+))
+  "Encode a UUID as [+uuid+ 16 <16 raw bytes>].
+The installed uuid library's uuid-to-byte-array takes a single argument and
+returns the raw 16 octets, so we prepend the type tag and length ourselves
+to match the layout extract-length / deserialize-help expect for +uuid+."
+  (let ((raw (uuid:uuid-to-byte-array uuid))
+        (vec (make-byte-vector 18)))
+    (setf (aref vec 0) +uuid+)
+    (setf (aref vec 1) 16)
+    (dotimes (i 16)
+      (setf (aref vec (+ 2 i)) (aref raw i)))
+    vec))
 
 (defmethod deserialize-help ((become (eql +positive-integer+)) (bytes array))
   "Decode a positive integer."
@@ -305,16 +315,17 @@
       (make-array 3
                   :element-type '(unsigned-byte 8)
                   :initial-contents `(,+positive-integer+ 1 0))
-      (let* ((n-bytes (ceiling (integer-length int) 8))
+      ;; Derive the byte count from the magnitude, not from INT itself: the
+      ;; integer-length of a negative power of two (e.g. -256, or -1) is one
+      ;; bit short of its magnitude, which would truncate the stored bytes.
+      (let* ((negativep (minusp int))
+             (magnitude (abs int))
+             (n-bytes (ceiling (integer-length magnitude) 8))
              (vec (make-array (+ 2 n-bytes) :element-type '(unsigned-byte 8))))
-        (if (minusp int)
-            (progn
-              (setf (aref vec 0) +negative-integer+)
-              (setq int (abs int)))
-            (setf (aref vec 0) +positive-integer+))
+        (setf (aref vec 0) (if negativep +negative-integer+ +positive-integer+))
         (setf (aref vec 1) n-bytes)
         (dotimes (i n-bytes)
-          (setf (aref vec (+ 2 i)) (ldb (byte 8 (* i 8)) int)))
+          (setf (aref vec (+ 2 i)) (ldb (byte 8 (* i 8)) magnitude)))
         vec)))
 
 (defmethod deserialize-help ((become (eql +single-float+)) (bytes array))
@@ -349,8 +360,8 @@
 (defmethod serialize ((char character))
   "Encode a Unicode character."
   (let* ((code (char-code char))
-	 (total-bytes (ceiling (integer-length code) 8))
-	 (vec (make-array (+ 2 total-bytes) :element-type '(unsigned-byte 8))))
+         (total-bytes (ceiling (integer-length code) 8))
+         (vec (make-array (+ 2 total-bytes) :element-type '(unsigned-byte 8))))
     (setf (aref vec 0) +character+)
     (setf (aref vec 1) total-bytes)
     (dotimes (i total-bytes)
@@ -367,11 +378,11 @@
 arrays: one to get lisp's internal byte representation of the string, and then
 another for prepending our code and the length of the object."
   (let* ((unicode (babel:string-to-octets string))
-	 (vector-length (length unicode))
-	 (encoded-length (encode-length vector-length))
-	 (length-of-encoded-length (length encoded-length))
-	 (vec (make-array (+ 1 length-of-encoded-length vector-length)
-			  :element-type '(unsigned-byte 8))))
+         (vector-length (length unicode))
+         (encoded-length (encode-length vector-length))
+         (length-of-encoded-length (length encoded-length))
+         (vec (make-array (+ 1 length-of-encoded-length vector-length)
+                          :element-type '(unsigned-byte 8))))
     (setf (aref vec 0) +string+)
     (dotimes (i length-of-encoded-length)
       (setf (aref vec (1+ i)) (aref encoded-length i)))
@@ -397,8 +408,13 @@ another for prepending our code and the length of the object."
   (intern (deserialize-help +string+ bytes) :keyword))
 
 (defmethod serialize ((symbol symbol))
-  (or (and (null symbol) #(#.+null+))
-      (and (eq symbol t) #(#.+t+))
+  ;; T and NIL must serialize to (unsigned-byte 8) vectors like everything
+  ;; else; the previous literal #(...) vectors were simple-vectors of type T,
+  ;; which DESERIALIZE rejected at top level.
+  (or (and (null symbol)
+           (let ((v (make-byte-vector 1))) (setf (aref v 0) +null+) v))
+      (and (eq symbol t)
+           (let ((v (make-byte-vector 1))) (setf (aref v 0) +t+) v))
       (let ((symbol-name (serialize (symbol-name symbol))))
         (if (keywordp symbol)
             (progn
@@ -430,7 +446,7 @@ another for prepending our code and the length of the object."
   (declare (type (array (unsigned-byte 8)) bytes))
   (declare (type (integer 0 255) become))
   (let* ((items (extract-all-subseqs bytes))
-	 (result nil))
+         (result nil))
     (loop for i downfrom (- (length items) 2) to 0 do
       (push (deserialize (nth i items)) result))
     (nconc result (deserialize (car (last items))))))
@@ -438,33 +454,33 @@ another for prepending our code and the length of the object."
 (defmethod serialize ((list list))
   (if (proper-listp list)
       (let* ((serialized-items (mapcar #'serialize list))
-	     (total-length (reduce #'+ serialized-items :key 'length))
-	     (encoded-length (encode-length total-length))
-	     (length-of-encoded-length (length encoded-length))
-	     (vec (make-array 0 :fill-pointer t :adjustable t
+             (total-length (reduce #'+ serialized-items :key 'length))
+             (encoded-length (encode-length total-length))
+             (length-of-encoded-length (length encoded-length))
+             (vec (make-array 0 :fill-pointer t :adjustable t
                               :element-type '(unsigned-byte 8))))
-	(vector-push-extend +list+ vec)
-	(dotimes (i length-of-encoded-length)
-	  (vector-push-extend (aref encoded-length i) vec))
-	(dolist (item serialized-items)
-	  (dotimes (i (length item))
-	    (vector-push-extend (aref item i) vec)))
-	vec)
+        (vector-push-extend +list+ vec)
+        (dotimes (i length-of-encoded-length)
+          (vector-push-extend (aref encoded-length i) vec))
+        (dolist (item serialized-items)
+          (dotimes (i (length item))
+            (vector-push-extend (aref item i) vec)))
+        vec)
       (let ((vec (make-array 0 :fill-pointer t :adjustable t
                              :element-type '(unsigned-byte 8)))
-	    (serialized-items nil))
-	(loop for elt on list do
-	     (push (serialize (car elt)) serialized-items)
-	     (when (atom (cdr elt))
-	       ;; The last element
-	       (push (serialize (cdr elt)) serialized-items)))
-	(let* ((total-length (reduce #'+ serialized-items :key 'length))
-	       (encoded-length (encode-length total-length))
-	       (length-of-encoded-length (length encoded-length)))
-	  (vector-push-extend +dotted-list+ vec)
-	  (dotimes (i length-of-encoded-length)
-	    (vector-push-extend (aref encoded-length i) vec))
-	  (dolist (item (reverse serialized-items))
-	    (dotimes (i (length item))
-	      (vector-push-extend (aref item i) vec)))
-	  vec))))
+            (serialized-items nil))
+        (loop for elt on list do
+             (push (serialize (car elt)) serialized-items)
+             (when (atom (cdr elt))
+               ;; The last element
+               (push (serialize (cdr elt)) serialized-items)))
+        (let* ((total-length (reduce #'+ serialized-items :key 'length))
+               (encoded-length (encode-length total-length))
+               (length-of-encoded-length (length encoded-length)))
+          (vector-push-extend +dotted-list+ vec)
+          (dotimes (i length-of-encoded-length)
+            (vector-push-extend (aref encoded-length i) vec))
+          (dolist (item (reverse serialized-items))
+            (dotimes (i (length item))
+              (vector-push-extend (aref item i) vec)))
+          vec))))

@@ -190,7 +190,11 @@ characters.~@:>" string (length string)))
   (- (sb-kernel::dynamic-space-size) (sb-kernel:dynamic-usage))
   ;; TODO: LispWorks
   #+ccl
-  (ccl::%freebytes))
+  (ccl::%freebytes)
+  ;; ECL has no cheap free-memory query; report "plenty" so the optional
+  ;; force-GC path (guarded by *allow-force-gc-p*, off by default) never trips.
+  #+ecl
+  most-positive-fixnum)
 
 (defun djb-hash (seq)
   ;; Not used
@@ -274,6 +278,14 @@ characters.~@:>" string (length string)))
                                           (uuid:print-bytes nil x)
                                           (uuid:print-bytes nil y)))
 
+  ;; Lexicographic list ordering base cases.  Without these, the recursion bottoms
+  ;; out at (less-than NIL NIL) -> T via ((x null) y), so an equal list compares as
+  ;; LESS THAN itself -- which silently corrupts a skip list keyed by composite
+  ;; (list ...) keys (e.g. an :ORIGIN-scoped unique key (origin value)).  These
+  ;; must precede the null/list catch-alls below (they are strictly more specific).
+  (:method ((x null) (y null))           nil)   ; equal empty lists -- neither precedes
+  (:method ((x cons) (y null))           nil)   ; a non-empty list is NOT < the empty list
+  (:method ((x null) (y cons))           t)     ; the empty list precedes any non-empty one
   (:method ((x list) (y list))           (or (less-than (car x) (car y))
                                              (and (equal (car x) (car y))
                                                   (less-than (cdr x) (cdr y)))))
@@ -367,6 +379,10 @@ characters.~@:>" string (length string)))
                                           (uuid:print-bytes nil x)
                                           (uuid:print-bytes nil y)))
 
+  ;; Lexicographic list ordering base cases (symmetric with LESS-THAN's).
+  (:method ((x null) (y null))           nil)   ; equal empty lists
+  (:method ((x cons) (y null))           t)     ; a non-empty list follows the empty one
+  (:method ((x null) (y cons))           nil)   ; the empty list is NOT > a non-empty one
   (:method ((x list) (y list))           (or (greater-than (car x) (car y))
                                              (and (equal (car x) (car y))
                                                   (greater-than (cdr x) (cdr y)))))
@@ -432,6 +448,8 @@ characters.~@:>" string (length string)))
   `(do-with-lock ,lock ,whostate ,timeout (lambda () ,@body))
   #+lispworks
   `(mp:with-lock (,lock) ,@body)
+  #+ecl
+  `(mp:with-lock (,lock) ,@body)
   #+sbcl
   `(sb-thread:with-recursive-lock (,lock)
      (progn ,@body)))
@@ -439,12 +457,22 @@ characters.~@:>" string (length string)))
 (defun make-semaphore ()
   #+sbcl (sb-thread:make-semaphore)
   #+lispworks(mp:make-semaphore)
-  #+ccl (ccl:make-semaphore))
+  #+ccl (ccl:make-semaphore)
+  ;; ECL: BT apiv1 uses %semaphore structs (not native mp:semaphore) for its
+  ;; signal/wait implementations.  graph-db (:use #:bordeaux-threads), so this
+  ;; defun redefines bordeaux-threads:make-semaphore for the whole image.
+  ;; Return a %semaphore-compatible object so bt:signal/wait-on-semaphore work.
+  #+ecl (bordeaux-threads::make-%semaphore
+         :lock (bordeaux-threads:make-lock "semaphore")
+         :condition-variable (bordeaux-threads:make-condition-variable)
+         :counter 0))
 
 (defmacro with-locked-hash-table ((table) &body body)
   #+lispworks
   `(progn ,@body)
   #+ccl
+  `(progn ,@body)
+  #+ecl
   `(progn ,@body)
   #+sbcl
   `(sb-ext:with-locked-hash-table (,table)

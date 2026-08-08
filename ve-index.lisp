@@ -62,7 +62,12 @@
                    :single-thread nil 
                    :weak-kind :value)
   #+sbcl
-  (make-hash-table :test 've-key-equal :synchronized t :weakness :value))
+  (make-hash-table :test 've-key-equal :synchronized t :weakness :value)
+  ;; %VE-KEY-EQUAL is exactly EQUALP on the VE-KEY struct (= type-id + equalp
+  ;; id), so ECL's native EQUALP tables are an exact substitute (no custom
+  ;; hash-table test support on ECL).
+  #+ecl
+  (make-hash-table :test 'equalp :weakness :value))
 
 (defstruct (ve-index
              (:constructor %make-ve-index))
@@ -142,24 +147,30 @@
 (defmethod cache-index-list ((index ve-index) (key ve-key) (il index-list))
   (setf (gethash key (ve-index-cache index)) il))
 
+;; Both bind *GRAPH* to the OWNING graph so the lhash value-deserializer
+;; (DESERIALIZE-INDEX-LIST, which defaults the index-list heap to (HEAP *GRAPH*))
+;; resolves against GRAPH, not the ambient *GRAPH* -- else a cross-graph read binds
+;; the list to the wrong heap and poisons the cache (wrong-graph audit SUSPECT #3).
 (defmethod lookup-ve-in-index-list ((key ve-key) (graph graph))
-  (or (gethash key (ve-index-cache (ve-index-in graph)))
-      (let ((table (ve-index-table (ve-index-in graph))))
-        (with-locked-hash-key (table key)
-          (let ((il (lhash-get table key)))
-            (when il
-              (cache-index-list (ve-index-in graph) key il)))))))
+  (let ((*graph* graph))
+    (or (gethash key (ve-index-cache (ve-index-in graph)))
+        (let ((table (ve-index-table (ve-index-in graph))))
+          (with-locked-hash-key (table key)
+            (let ((il (lhash-get table key)))
+              (when il
+                (cache-index-list (ve-index-in graph) key il))))))))
 
 (defmethod lookup-ve-out-index-list ((key ve-key) (graph graph))
-  (or (gethash key (ve-index-cache (ve-index-out graph)))
-      (let ((table (ve-index-table (ve-index-out graph))))
-        (with-locked-hash-key (table key)
-          (let ((il (lhash-get table key)))
-            (when il
-              (cache-index-list (ve-index-out graph) key il)))))))
+  (let ((*graph* graph))
+    (or (gethash key (ve-index-cache (ve-index-out graph)))
+        (let ((table (ve-index-table (ve-index-out graph))))
+          (with-locked-hash-key (table key)
+            (let ((il (lhash-get table key)))
+              (when il
+                (cache-index-list (ve-index-out graph) key il))))))))
 
 (defmethod ve-index-push ((idx ve-index) (key ve-key) (id array)
-                          &key unless-present)
+                          &key unless-present heap)
   (let ((table (ve-index-table idx)))
     (with-locked-hash-key (table key)
       ;;(log:debug "ve-index-push ~A:~A" key id)
@@ -174,8 +185,13 @@
               ;;(log:debug "add-to-ve-index: AFTER PUSH: ~A" index-list)
               )
             (progn
+              ;; Allocate the new index-list in the OWNING graph's heap (passed
+              ;; in by the caller), not (heap *graph*) -- else an edge inserted
+              ;; while *graph* names a different graph (slave apply, replay, a
+              ;; second open graph) stores an index-list head that points into a
+              ;; foreign heap.  Sibling ADD-TO-VEV-INDEX threads (heap graph) too.
               (setq index-list
-                    (make-index-list (heap *graph*) id))
+                    (make-index-list (or heap (heap *graph*)) id))
               ;;(log:debug "add-to-ve-index: Made new ~A" index-list)
               (%lhash-insert table key index-list)))
         (cache-index-list idx key index-list)))))

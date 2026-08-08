@@ -75,7 +75,12 @@
                    :single-thread nil
                    :weak-kind :value)
   #+sbcl
-  (make-hash-table :test 'vev-key-equal :synchronized t :weakness :value))
+  (make-hash-table :test 'vev-key-equal :synchronized t :weakness :value)
+  ;; %VEV-KEY-EQUAL is exactly EQUALP on the VEV-KEY struct (= type-id + equalp
+  ;; out-id + equalp in-id), so ECL's native EQUALP tables are an exact
+  ;; substitute (no custom hash-table test support on ECL).
+  #+ecl
+  (make-hash-table :test 'equalp :weakness :value))
 
 (defstruct (vev-index
              (:constructor %make-vev-index))
@@ -83,7 +88,7 @@
   (cache (make-vev-cache)))
 
 (defmethod serialize-vev-key-mmap ((mf mapped-file) (vev-key vev-key)
-                                  (offset integer))
+                                   (offset integer))
   (declare (type word offset))
   (dotimes (i 16)
     (set-byte mf offset (aref (vev-key-out-id vev-key) i))
@@ -170,12 +175,18 @@
   (setf (gethash key (vev-index-cache index)) il))
 
 (defmethod lookup-vev-index-list ((key vev-key) (graph graph))
-  (or (gethash key (vev-index-cache (vev-index graph)))
-      (let ((table (vev-index-table (vev-index graph))))
-        (with-locked-hash-key (table key)
-          (let ((il (lhash-get table key)))
-            (when il
-              (cache-index-list (vev-index graph) key il)))))))
+  ;; Bind *GRAPH* to the OWNING graph: the lhash value-deserializer
+  ;; (DESERIALIZE-INDEX-LIST) defaults the index-list's heap to (HEAP *GRAPH*), so a
+  ;; cross-graph read (GRAPH /= *GRAPH*) would bind the list to the wrong heap -- and
+  ;; CACHE-INDEX-LIST would then poison the cache with it.  (Surfaced as an ECL-only
+  ;; cross-graph EDGE-EXISTS-P failure; the wrong-graph audit's deferred SUSPECT #3.)
+  (let ((*graph* graph))
+    (or (gethash key (vev-index-cache (vev-index graph)))
+        (let ((table (vev-index-table (vev-index graph))))
+          (with-locked-hash-key (table key)
+            (let ((il (lhash-get table key)))
+              (when il
+                (cache-index-list (vev-index graph) key il))))))))
 
 (defgeneric add-to-vev-index (edge graph &key unless-present))
 (defgeneric remove-from-vev-index (edge graph))

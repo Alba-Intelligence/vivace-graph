@@ -27,8 +27,13 @@
 
 (defun %make-edge (&key id type-id revision deleted-p data-pointer data bytes from
                      to weight written-p heap-written-p type-idx-written-p
-                     ve-written-p vev-written-p views-written-p)
-  (let ((edge (get-edge-buffer)))
+                     ve-written-p vev-written-p views-written-p
+                     commit-epoch prev-pointer (class 'edge))
+  ;; ECL ONLY: construct the target CLASS directly (ECL's CHANGE-CLASS leaks per
+  ;; call -- #47), giving up the node buffer pool on ECL.  SBCL/CCL/LispWorks
+  ;; keep the pooled base EDGE + CHANGE-CLASS path (no leak, pool is a perf win).
+  (let ((edge #+ecl (let ((*initializing-node* t)) (make-instance class))
+              #-ecl (get-edge-buffer)))
     (cond (id
            (setf (id edge) id))
           ((equalp +null-key+ (id edge))
@@ -38,6 +43,8 @@
     (when weight (setf (weight edge) weight))
     (when type-id (setf (type-id edge) type-id))
     (when revision (setf (revision edge) revision))
+    (when commit-epoch (setf (commit-epoch edge) commit-epoch))
+    (when prev-pointer (setf (prev-pointer edge) prev-pointer))
     ;; Flags
     (when deleted-p (setf (deleted-p edge) deleted-p))
     (when written-p (setf (written-p edge) written-p))
@@ -50,30 +57,36 @@
     (when data-pointer (setf (data-pointer edge) data-pointer))
     (when data (setf (data edge) data))
     (when bytes (setf (bytes edge) bytes))
+    ;; Non-ECL: promote the pooled base EDGE to its subclass (unchanged; no leak
+    ;; on these impls).  On ECL EDGE is already CLASS.
+    #-ecl (change-node-class edge class)
     edge))
 
 (defun serialize-edge-head (mf e offset)
-  (setq offset (serialize-node-head mf e offset))
-  (dotimes (i 16)
-    (set-byte mf (incf offset) (aref (from e) i)))
-  (dotimes (i 16)
-    (set-byte mf (incf offset) (aref (to e) i)))
-  (let ((int (ieee-floats:encode-float64 (weight e))))
-    (dotimes (i 8)
-      (set-byte mf (incf offset) (ldb (byte 8 0) int))
-      (setq int (ash int -8)))))
+  ;; Build the whole edge head (node head + from + to + weight) in one vector
+  ;; and move it with a single SET-BYTES (see SERIALIZE-NODE-HEAD).
+  (let ((vec (make-byte-vector +edge-header-size+))
+        (i 0))
+    (setq i (pack-node-head vec 0 e))      ;; i now past the node head
+    (replace vec (from e) :start1 i)       (incf i 16)
+    (replace vec (to e)   :start1 i)       (incf i 16)
+    (pack-uint vec i (ieee-floats:encode-float64 (weight e)) 8)
+    (set-bytes mf vec offset +edge-header-size+)
+    (+ offset (1- +edge-header-size+))))
 
 (defun deserialize-edge-head (mf offset)
   (multiple-value-bind
         (deleted-p written-p heap-written-p type-idx-written-p views-written-p
-                   ve-written-p vev-written-p type-id revision pointer offset)
-      (deserialize-node-head mf offset)
+                   ve-written-p vev-written-p type-id revision pointer
+                   commit-epoch prev-pointer offset)
+      (funcall *node-head-reader* mf offset)
     (let* ((subclass (if (eq type-id 0)
                          'edge
                          (let ((type-meta (lookup-node-type-by-id
                                            type-id :edge)))
                            (node-type-name type-meta))))
            (e (%make-edge
+               :class subclass
                :deleted-p deleted-p
                :written-p written-p
                :heap-written-p heap-written-p
@@ -84,6 +97,8 @@
                :type-id type-id
                :revision revision
                :data-pointer pointer
+               :commit-epoch commit-epoch
+               :prev-pointer prev-pointer
                :from (let ((vec (get-buffer 16)))
                        (dotimes (i 16)
                          (setf (aref vec i) (get-byte mf (incf offset))))
@@ -97,7 +112,7 @@
                            (setq int (dpb (get-byte mf (incf offset))
                                           (byte 8 (* i 8)) int)))
                          (ieee-floats:decode-float64 int)))))
-      (change-class e subclass))))
+      e)))
 
 (defun make-edge-table (location &key (key-test 'uuid-array-equal)
                                    (base-buckets (expt 2 18)))
@@ -117,15 +132,18 @@
   (lookup-edge (read-id-array-from-string id) :graph graph))
 
 (defmethod lookup-edge ((id array) &key (graph *graph*))
+  "Return the edge with the given ID (a 16-byte id array or its string form) in
+GRAPH, or NIL if none.  Returns it regardless of its deleted flag; the
+generated LOOKUP-<type> functions filter deleted edges."
   (lookup-object id (edge-table graph) *transaction* graph))
 
 (defmethod add-to-ve-index ((edge edge) (graph graph) &key unless-present)
   (let ((in-ve-key (make-ve-key :id (to edge) :type-id (type-id edge)))
         (out-ve-key (make-ve-key :id (from edge) :type-id (type-id edge))))
     (ve-index-push (ve-index-in graph) in-ve-key (id edge)
-                   :unless-present unless-present)
+                   :unless-present unless-present :heap (heap graph))
     (ve-index-push (ve-index-out graph) out-ve-key (id edge)
-                   :unless-present unless-present)))
+                   :unless-present unless-present :heap (heap graph))))
 
 (defmethod remove-from-ve-index ((edge edge) (graph graph))
   (let ((in-ve-key (make-ve-key :id (to edge) :type-id (type-id edge)))
@@ -181,6 +199,12 @@
 (defun make-edge (type from to weight data &key id revision deleted-p
                   retry-p
                   (graph *graph*))
+  "Create and persist an edge of the type named/identified by TYPE (a node type
+name, integer id, or :GENERIC) from vertex FROM to vertex TO in GRAPH, with the
+given WEIGHT and slot DATA; return it.  FROM and TO may be vertices, id arrays,
+or id strings.  Must run inside a transaction.  You normally call the generated
+MAKE-<type> constructor (e.g. (MAKE-FOLLOWS :FROM a :TO b)) instead.  :RETRY-P
+regenerates the id on a duplicate-key collision."
   (when (stringp id)
     (setq id (read-id-array-from-string id)))
   (typecase from
@@ -200,6 +224,7 @@
                              (node-type-name type-meta)))
                (bytes (when data (serialize data)))
                (e (%make-edge
+                   :class subclass
                    :id id ;; (or id (gen-edge-id))
                    :type-id (if (eq type-meta :generic)
                                 0
@@ -212,7 +237,6 @@
                    :weight weight
                    :bytes bytes
                    :data data)))
-          (change-class e subclass)
           (setf (bytes e) bytes)
           (handler-case
               (create-node e graph)
@@ -270,8 +294,8 @@
 (defmethod edge-exists-p (edge-type (vertex1 vertex) (vertex2 vertex)
                           &key (graph *graph*))
   (let ((type-meta (or (and (integerp edge-type)
-                            (lookup-node-type-by-id edge-type :edge))
-                       (lookup-node-type-by-name edge-type :edge))))
+                            (lookup-node-type-by-id edge-type :edge :graph graph))
+                       (lookup-node-type-by-name edge-type :edge :graph graph))))
     (when type-meta
       (let* ((vev-key (make-vev-key :in-id (id vertex2)
                                     :out-id (id vertex1)
@@ -281,138 +305,136 @@
           (map-index-list
            (lambda (edge-id)
              (let ((edge (lookup-edge edge-id :graph graph)))
-               (when (and (written-p edge)
-                          (active-edge-p edge))
+               (when (and edge (written-p edge)
+                          (active-edge-p edge :graph graph))
                  (return-from edge-exists-p edge))))
            index-list))))))
 
-(defun map-edges (fn graph &key collect-p edge-type vertex direction
-                  include-deleted-p to-vertex from-vertex exclude-edge-types)
-  ;; FIXME: need to handle subclasses when edge-type is specified
-  (let ((result nil))
-    (cond ((and edge-type to-vertex from-vertex)
-           (let ((type-meta (or (and (integerp edge-type)
-                                     (lookup-node-type-by-id edge-type :edge))
-                                (lookup-node-type-by-name edge-type :edge))))
-             (when type-meta
+(defun map-edges (fn graph &key collect-p edge-type include-edge-types vertex
+                             direction include-deleted-p to-vertex from-vertex
+                             exclude-edge-types (include-subclasses-p t))
+  "Call FN on edges of GRAPH.
+
+Narrow the set with :EDGE-TYPE (a single type name or numeric type-id) and/or
+:INCLUDE-EDGE-TYPES (a list of either) -- their union is visited; with no type
+given, EVERY edge type is visited.  :EXCLUDE-EDGE-TYPES (a list) removes types
+from that set.  Unless :INCLUDE-SUBCLASSES-P is NIL (default T) each named type
+also matches its subtypes (see RESOLVE-NODE-TYPE-IDS) -- mirroring MAP-VERTICES.
+Restrict to a vertex's adjacent edges with :VERTEX plus :DIRECTION (:OUT or :IN),
+or to a specific endpoint pair with :FROM-VERTEX and :TO-VERTEX.  Deleted edges
+are skipped unless :INCLUDE-DELETED-P.  With :COLLECT-P, collect and return FN's
+values; otherwise return NIL.  This drives OUTGOING-EDGES / INCOMING-EDGES.
+
+NOTE: the fully-untyped, non-adjacency scan (no type and no vertex/endpoint)
+walks the raw edge lhash, which reads LIVE edge versions and so BYPASSES MVCC
+snapshot isolation -- intended for back-end / admin passes run while the graph is
+quiescent.  Every typed or adjacency scan goes through an index + LOOKUP-EDGE and
+is snapshot-consistent.  (Generic, type-0 edges appear only in this untyped scan;
+typed/adjacency scans skip the 0 sentinel, as they always have.)"
+  ;; Bind *GRAPH* to GRAPH so the value-deserializer (deserialize-edge-head)
+  ;; resolves type-ids against the right schema even when mapping a graph that
+  ;; isn't the current *GRAPH* (see the note in MAP-VERTICES).
+  (let* ((result nil)
+         (*graph* graph)
+         ;; Collected edges escape the scan pin -> materialize before FN; a
+         ;; side-effect scan runs FN inside the pin so its lazy reads are safe.
+         (fn (if collect-p
+                 (let ((user-fn fn))
+                   (lambda (e) (ensure-node-bytes e graph) (funcall user-fn e)))
+                 fn))
+         (requested (append (when edge-type (list edge-type)) include-edge-types))
+         (excluded (when exclude-edge-types
+                     (resolve-node-type-ids exclude-edge-types :edge
+                                            :include-subclasses-p include-subclasses-p
+                                            :graph graph)))
+         ;; Type-ids to scan: the resolved (subclass-expanded) union for a typed
+         ;; query, or EVERY edge type for an untyped one.  The all-types list is
+         ;; deliberately NOT subclass-expanded -- each concrete type-id is visited
+         ;; exactly once, the guard against double-counting a subtype (which would
+         ;; otherwise be hit directly AND under its parent).
+         (type-ids (if requested
+                       (resolve-node-type-ids requested :edge
+                                              :include-subclasses-p include-subclasses-p
+                                              :graph graph)
+                       (list-edge-types graph))))
+    (with-read-pin (graph) ; retain whatever versions this scan observes
+      (flet ((emit (edge)
+               (when (and edge (written-p edge)
+                          (or include-deleted-p (active-edge-p edge)))
+                 (if collect-p (push (funcall fn edge) result) (funcall fn edge))))
+             (keep-type (tid) (and (plusp tid) (not (member tid excluded)))))
+        (cond
+          ;; a specific endpoint pair -> vev-index per type-id
+          ((and to-vertex from-vertex)
+           (dolist (tid type-ids)
+             (when (keep-type tid)
                (let* ((vev-key (make-vev-key :in-id (id to-vertex)
                                              :out-id (id from-vertex)
-                                             :type-id (node-type-id type-meta)))
-                      (index-list (lookup-vev-index-list vev-key graph)))
-                 (when index-list
+                                             :type-id tid))
+                      (il (lookup-vev-index-list vev-key graph)))
+                 (when il
                    (map-index-list
-                    (lambda (edge-id)
-                      (let ((edge (lookup-edge edge-id :graph graph)))
-                        (when (and (written-p edge)
-                                   (or include-deleted-p
-                                       ;;(not (deleted-p edge))))
-                                       (active-edge-p edge)))
-                          (if collect-p
-                              (push (funcall fn edge) result)
-                              (funcall fn edge)))))
-                    index-list))))))
-          ((and to-vertex from-vertex)
-           (let ((mapper
-                  (lambda (edge-type-id)
-                    (when (or (zerop edge-type-id)
-                              (null exclude-edge-types)
-                              (not
-                               (member (node-type-name
-                                        (lookup-node-type-by-id edge-type-id :edge))
-                                       exclude-edge-types)))
-                      (map-edges fn graph
-                                 :collect-p collect-p
-                                 :edge-type edge-type-id
-                                 :from-vertex from-vertex
-                                 :to-vertex to-vertex
-                                 :exclude-edge-types exclude-edge-types
-                                 :include-deleted-p include-deleted-p)))))
-             (if collect-p
-                 (setq result (mapcan mapper (list-edge-types)))
-                 (dolist (type-id (list-edge-types))
-                   (funcall mapper type-id)))))
-          ((and edge-type vertex)
-           (let ((type-meta (or (and (integerp edge-type)
-                                     (lookup-node-type-by-id edge-type :edge))
-                                (lookup-node-type-by-name edge-type :edge))))
-             (when type-meta
-               (let* ((ve-key (make-ve-key :id (id vertex)
-                                           :type-id (node-type-id type-meta)))
-                      (index-list
-                       (cond ((eq direction :out)
-                              (lookup-ve-out-index-list ve-key graph))
-                             ((eq direction :in)
-                              (lookup-ve-in-index-list ve-key graph))
-                             (t (error "Unknown direction: ~S" direction)))))
-                 (when index-list
-                   (map-index-list
-                    (lambda (edge-id)
-                      (let ((edge (lookup-edge edge-id :graph graph)))
-                        (when (and (written-p edge)
-                                   (or include-deleted-p
-                                       ;;(not (deleted-p edge))))
-                                       (active-edge-p edge)))
-                          (if collect-p
-                              (push (funcall fn edge) result)
-                              (funcall fn edge)))))
-                    index-list))))))
+                    (lambda (eid) (emit (lookup-edge eid :graph graph))) il))))))
+          ;; a vertex's adjacent edges -> ve-index (in/out) per type-id
           (vertex
-           (let ((mapper
-                  (lambda (edge-type-id)
-                    (when (or (zerop edge-type-id)
-                              (null exclude-edge-types)
-                              (not
-                               (member (node-type-name
-                                        (lookup-node-type-by-id edge-type-id :edge))
-                                       exclude-edge-types)))
-                      (map-edges fn graph
-                                 :collect-p collect-p
-                                 :edge-type edge-type-id
-                                 :vertex vertex
-                                 :direction direction
-                                 :exclude-edge-types exclude-edge-types
-                                 :include-deleted-p include-deleted-p)))))
-             (if collect-p
-                 (setq result (mapcan mapper (list-edge-types)))
-                 (dolist (type-id (list-edge-types))
-                   (funcall mapper type-id)))))
-          (edge-type
-           (let* ((type-meta (or (and (integerp edge-type)
-                                      (lookup-node-type-by-id edge-type :edge))
-                                 (lookup-node-type-by-name edge-type :edge)))
-                  (edge-type-id (node-type-id type-meta)))
-             (when edge-type-id
-               (let ((index-list (get-type-index-list (edge-index graph) edge-type-id)))
-                 (map-index-list (lambda (id)
-                                   (let ((edge (lookup-edge id :graph graph)))
-                                     (when (and (written-p edge)
-                                                (or include-deleted-p
-                                                    ;;(not (deleted-p edge))))
-                                                    (active-edge-p edge)))
-                                       (if collect-p
-                                           (push (funcall fn edge) result)
-                                           (funcall fn edge)))))
-                                 index-list)))))
+           (dolist (tid type-ids)
+             (when (keep-type tid)
+               (let* ((ve-key (make-ve-key :id (id vertex) :type-id tid))
+                      (il (cond ((eq direction :out)
+                                 (lookup-ve-out-index-list ve-key graph))
+                                ((eq direction :in)
+                                 (lookup-ve-in-index-list ve-key graph))
+                                (t (error "Unknown direction: ~S" direction)))))
+                 (when il
+                   (map-index-list
+                    (lambda (eid) (emit (lookup-edge eid :graph graph))) il))))))
+          ;; typed, no adjacency -> type-index per type-id
+          (requested
+           (dolist (tid type-ids)
+             (when (keep-type tid)
+               (let ((il (get-type-index-list (edge-index graph) tid)))
+                 (when il
+                   (map-index-list
+                    (lambda (eid) (emit (lookup-edge eid :graph graph))) il))))))
+          ;; fully untyped -> live lhash scan (see NOTE); per-edge exclude
           (t
-           (map-lhash #'(lambda (pair)
-                          (let ((edge (cdr pair)))
-                            (when (and (written-p edge)
-                                       (or include-deleted-p
-                                           (active-edge-p edge))
-                                       (not (member (type-of edge) exclude-edge-types)))
-                              (setf (id edge) (car pair))
-                              (if collect-p
-                                  (push (funcall fn edge) result)
-                                  (funcall fn edge)))))
-                      (edge-table *graph*))))
+           (map-lhash
+            #'(lambda (pair)
+                (let ((edge (cdr pair)))
+                  (when (and edge (written-p edge)
+                             (or include-deleted-p (active-edge-p edge))
+                             (not (member (type-id edge) excluded)))
+                    (setf (id edge) (car pair))
+                    (if collect-p (push (funcall fn edge) result) (funcall fn edge)))))
+            (edge-table graph))))))
     (when collect-p (nreverse result))))
 
-(defmethod outgoing-edges ((vertex vertex) &key (graph *graph*) edge-type include-deleted-p)
-  (map-edges 'identity graph :vertex vertex :edge-type edge-type :direction :out
+(defmethod outgoing-edges ((vertex vertex) &key (graph *graph*) edge-type
+                                             include-edge-types
+                                             (include-subclasses-p t)
+                                             include-deleted-p)
+  "Return a list of edges directed out of VERTEX (i.e. whose FROM is VERTEX) in
+GRAPH.  :EDGE-TYPE restricts to one edge type and :INCLUDE-EDGE-TYPES to a list
+of types (their union); with neither, all edge types are returned.  Unless
+:INCLUDE-SUBCLASSES-P is NIL (default T) each named type also matches its
+subtypes.  :INCLUDE-DELETED-P includes soft-deleted edges (excluded by default)."
+  (map-edges 'identity graph :vertex vertex :edge-type edge-type
+             :include-edge-types include-edge-types
+             :include-subclasses-p include-subclasses-p :direction :out
              :collect-p t :include-deleted-p include-deleted-p))
 
-(defmethod incoming-edges ((vertex vertex) &key (graph *graph*) edge-type include-deleted-p)
-  (map-edges 'identity graph :vertex vertex :edge-type edge-type :direction :in
+(defmethod incoming-edges ((vertex vertex) &key (graph *graph*) edge-type
+                                             include-edge-types
+                                             (include-subclasses-p t)
+                                             include-deleted-p)
+  "Return a list of edges directed into VERTEX (i.e. whose TO is VERTEX) in
+GRAPH.  :EDGE-TYPE restricts to one edge type and :INCLUDE-EDGE-TYPES to a list
+of types (their union); with neither, all edge types are returned.  Unless
+:INCLUDE-SUBCLASSES-P is NIL (default T) each named type also matches its
+subtypes.  :INCLUDE-DELETED-P includes soft-deleted edges (excluded by default)."
+  (map-edges 'identity graph :vertex vertex :edge-type edge-type
+             :include-edge-types include-edge-types
+             :include-subclasses-p include-subclasses-p :direction :in
              :collect-p t :include-deleted-p include-deleted-p))
 
 (defmethod compact-edges ((graph graph))
@@ -423,5 +445,5 @@
                  (remove-from-type-index edge graph)
                  (remove-from-ve-index edge graph)
                  (remove-from-vev-index edge graph)))
-             *graph*
+             graph
              :include-deleted-p t))

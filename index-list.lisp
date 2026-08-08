@@ -10,10 +10,22 @@
                 (format s "#<INDEX-LIST (HEAD ~A)>"
                         (index-list-head il)))))
   heap
-  (cache
-   #+sbcl (make-hash-table :weakness :value :synchronized t)
-   #+ccl (make-hash-table :weak :value :shared t)
-   #+lispworks (make-hash-table :weak-kind :value :single-thread nil))
+  ;; Per-index-list pcons cache, DISABLED (defaults to NIL).
+  ;;
+  ;; This cache is dead code: every read of it is commented out (see
+  ;; DESERIALIZE-PCONS, "using the cache causes the system to hang"), so it was
+  ;; only ever written, never consulted.  Worse, eagerly allocating one weak
+  ;; hash-table per index-list crashes CCL's GC once many are live at the same
+  ;; time -- e.g. the 65536 index-lists a TYPE-INDEX holds -- which made
+  ;; MAKE-GRAPH unusable on CCL.  The original allocation is preserved below
+  ;; (commented out) in case the cache is ever revived; if so, also re-enable
+  ;; the guarded writes in MAKE-INDEX-LIST / DELETE-INDEX-LIST and the reads in
+  ;; DESERIALIZE-PCONS.
+  (cache nil
+   ;; #+sbcl (make-hash-table :weakness :value :synchronized t)
+   ;; #+ccl (make-hash-table :weak :value :shared t)
+   ;; #+lispworks (make-hash-table :weak-kind :value :single-thread nil)
+   )
   head
   (lock (make-rw-lock))
   dirty-p)
@@ -50,12 +62,16 @@
   ;;(log:debug "RETURNING OFFSET ~A" offset)
   offset)
 
-(defmethod deserialize-index-list ((mf mapped-file) (offset integer))
+(defmethod deserialize-index-list ((mf mapped-file) (offset integer)
+                                   &optional (heap (heap *graph*)))
+  ;; HEAP defaults to the current graph's heap (the :value-deserializer callers in
+  ;; ve-index/vev-index rely on that), but callers without *GRAPH* bound -- e.g.
+  ;; the lazy type-index %TI-LIST (#46) -- pass it explicitly.
   (let ((il (%make-index-list))
         (flags (get-byte mf offset)))
     (setf (index-list-dirty-p il) (ldb-test (byte 1 0) flags)
           (index-list-head il) (deserialize-uint64 mf (incf offset))
-          (index-list-heap il) (heap *graph*))
+          (index-list-heap il) heap)
     il))
 
 (defmethod %map-index-list (fn (il index-list) &key collect-p include-deleted-p)
@@ -111,6 +127,8 @@
       (sys:compare-and-swap (index-list-head il)
                             (index-list-head il)
                             address)
+      #+ecl
+      (setf (index-list-head il) address)
       ;;(log:debug "NEW HEAD: ~A" (index-list-head il))
       il)))
 
@@ -147,9 +165,10 @@
                 (setf (%pcons-car pcons) id
                       (%pcons-cdr pcons) uuid-address
                       (%pcons-deleted-p pcons) nil)
-                (setf (gethash uuid-address (index-list-cache il))
-                      pcons)
-              (setq prev uuid-address))))
+                (when (index-list-cache il)
+                  (setf (gethash uuid-address (index-list-cache il))
+                        pcons))
+                (setq prev uuid-address))))
           (setf (index-list-head il) prev)
           il)
       (error (c)
@@ -166,7 +185,8 @@
                       (index-list-heap il) (+ 16 address)))))
     (free (index-list-heap il) addr))
   (free (index-list-heap il) (index-list-head il))
-  (clrhash (index-list-cache il))
+  (when (index-list-cache il)
+    (clrhash (index-list-cache il)))
   (setf (index-list-head il) 0)
   nil)
 

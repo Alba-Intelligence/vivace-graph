@@ -43,6 +43,20 @@ indexes (ve-index-in, ve-index-out, vev-index) of GRAPH."
 (defun map-type-index-list-addresses (fn graph)
   "Call FN with the heap address of the index lists of each type index
 table index (edge-index, vertex-index) of GRAPH."
+  #+ecl
+  ;; Lazy type-index (#46): the ECL cache is sparse (only touched types are
+  ;; materialized), so maphashing it would miss the index-lists of types not yet
+  ;; referenced this session and free their still-live nodes.  Enumerate every
+  ;; ASSIGNED type-id instead -- ids are dense from 0 (0 = generic) up to the
+  ;; schema's next-*-id -- materializing each via GET-TYPE-INDEX-LIST.
+  (let ((schema (schema graph)))
+    (flet ((map-idx (idx next-id)
+             (dotimes (tid next-id)
+               (let ((il (get-type-index-list idx tid)))
+                 (when il (map-index-list-addresses fn il))))))
+      (map-idx (edge-index graph) (schema-next-edge-id schema))
+      (map-idx (vertex-index graph) (schema-next-vertex-id schema))))
+  #-ecl
   (let ((edge-table (type-index-cache (edge-index graph)))
         (vertex-table (type-index-cache (vertex-index graph))))
     (flet ((map-table (fn table)
@@ -92,10 +106,30 @@ walking the heap."
                 (funcall fn allocation-data-offset))
               (heap graph)))
 
+(defun map-version-chain-addresses (fn graph)
+  "Call FN with the heap address of every archived MVCC version head AND its
+retained data block, reachable via PREV-POINTER chains from the live nodes.
+Without this, GC-HEAP (which roots only live heads) would free the retained
+version chain on the next OPEN-GRAPH, leaving live PREV-POINTERs dangling."
+  (map-all-nodes
+   (lambda (node)
+     (let ((p (prev-pointer node)))
+       (loop
+         (when (zerop p) (return))
+         (funcall fn p)                       ; the archived head block
+         (multiple-value-bind (d w hw tiw vw vew vvw type-id rev data-ptr epoch prev off)
+             (deserialize-node-head (heap graph) p)
+           (declare (ignore d w hw tiw vw vew vvw type-id rev epoch off))
+           (when (> data-ptr 0)
+             (funcall fn data-ptr))            ; the archived version's data block
+           (setf p prev)))))
+   graph))
+
 (defun map-all-graph-allocations (fn graph)
   "Call FN for each heap address referenced through a data structure
 within GRAPH."
   (map-node-addresses fn graph)
+  (map-version-chain-addresses fn graph)
   (map-all-index-list-addresses fn graph))
 
 (defun heap-allocation-table (graph)
@@ -119,6 +153,12 @@ data structure in GRAPH to T. Used for debugging, not used in GC."
   "Garbage-collect the heap of GRAPH by calling FREE on any
 allocations that are not referenced through any data structure in
 GRAPH."
+  ;; A memory-graph has no mmap heap (nodes are live objects, DATA-POINTER 0),
+  ;; so heap GC is a no-op -- there is nothing to reclaim and (HEAP GRAPH) is NIL.
+  ;; Guard so an explicit GC-HEAP on a memory-graph is safe rather than a nil-heap
+  ;; dereference.
+  (unless (heap graph)
+    (return-from gc-heap nil))
   (log:debug "gc-ing graph database heap.")
   (let ((allocation-table (heap-allocation-table graph))
         (heap (heap graph)))
