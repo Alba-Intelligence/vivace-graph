@@ -267,6 +267,35 @@
   :serial t
   :components ((:file "io")))
 
+;; IMPORT/EXPORT: ecosystem interoperability layer.  Depends on core (no HTTP,
+;; no replication transport).  Provides format-agnostic import/export pipeline
+;; with streaming, mapping DSL, reconciliation, and pluggable format backends.
+;; Formats implemented as separate files under import-export/formats/.
+(defsystem graph-db/import-export
+  :name "VivaceGraph Import/Export"
+  :description "Pluggable import/export pipeline for graph interchange formats."
+  :depends-on (:graph-db/core
+               :cl-json
+               :cl-ppcre
+               :cl-csv
+               :jonathan
+               :parse-number)
+  :pathname "import-export/"
+  :serial t
+  :components ((:file "package")
+               (:file "protocol")
+               (:file "api")
+               (:file "mapping")
+               (:file "coercions")
+               (:file "geometry-map")
+               (:file "reconciliation")
+               (:file "upsert")
+               (:file "streaming")
+               (:file "serialization")
+               (:file "formats/jsonl")
+               (:file "test-protocol")
+               (:file "test-mapping")))
+
 (defsystem graph-db/algorithms-test
   :name "VivaceGraph graph-algorithms test suite"
   :description "FiveAM tests for graph-db/algorithms."
