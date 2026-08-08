@@ -12,3 +12,8 @@
 
 # Claude
 .claude
+.oh-my-opencode-pi*
+
+# Nix
+.devenv
+devenv.lock
