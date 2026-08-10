@@ -271,7 +271,7 @@
 ;; no replication transport).  Provides format-agnostic import/export pipeline
 ;; with streaming, mapping DSL, reconciliation, and pluggable format backends.
 ;; Formats implemented as separate files under import-export/formats/.
-(defsystem graph-db/import-export
+(defsystem graph-db.import-export
   :name "VivaceGraph Import/Export"
   :description "Pluggable import/export pipeline for graph interchange formats."
   :depends-on (:graph-db/core
@@ -293,8 +293,11 @@
                (:file "streaming")
                (:file "serialization")
                (:file "formats/jsonl")
+               (:file "formats/turtle")
                (:file "test-protocol")
-               (:file "test-mapping")))
+               (:file "test-mapping")
+               (:file "test-jsonl-integration")
+               (:file "formats/test-turtle")))
 
 (defsystem graph-db/algorithms-test
   :name "VivaceGraph graph-algorithms test suite"

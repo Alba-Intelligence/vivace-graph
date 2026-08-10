@@ -39,6 +39,8 @@
       sbcl
       ecl
       ccl
+
+      zlib-ng # Streaming of compressed Turtle files
     ]
   );
 
