@@ -17,3 +17,16 @@
 # Nix
 .devenv
 devenv.lock
+
+# Large data 
+yago/*
+demo/yago/
+
+# Local database files
+data/
+
+# Development test scripts
+quicklisp-setup.lisp
+test-compilation.lisp
+test-import.lisp
+test-load.lisp
