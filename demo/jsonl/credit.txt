@@ -1,0 +1,1 @@
+All JSONL exampless from https://github.com/nikolaydubina/jsonl-graph under MIT License
