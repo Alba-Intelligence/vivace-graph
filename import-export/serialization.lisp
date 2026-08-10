@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/serialization.lisp
 ;;;; Vertex/edge to plist serialization helpers.
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Vertex serialization

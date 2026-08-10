@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/geometry-map.lisp
 ;;;; Geometry coercion and mapping.
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Geometry coercion (handles :geometry coercion with format spec)

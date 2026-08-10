@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/test-protocol.lisp
 ;;;; Simple test to verify format registration and delegation works.
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;; Register a dummy format for testing
 (register-format :test-dummy

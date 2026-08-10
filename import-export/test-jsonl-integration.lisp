@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/test-jsonl-integration.lisp
 ;;;; Integration tests for JSONL import/export using real testdata files.
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;; Define test mapping specs
 (defparameter test-people-mapping-spec

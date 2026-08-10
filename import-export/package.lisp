@@ -11,6 +11,7 @@
    ;; Format protocol
    #:*format-registry*
    #:register-format
+   #:find-format
    #:format-streaming-p
    #:format-supports-export
    #:import-format

@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/reconciliation.lisp
 ;;;; Reconciliation table (source-id ↔ VG-UUID mapping)
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Reconciliation table definition

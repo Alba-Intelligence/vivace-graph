@@ -7,7 +7,7 @@
 ;;; Format object
 ;;; ---------------------------------------------------------------------------
 
-(defstruct (format-spec (:constructor make-format-spec (name)))
+(defstruct format-spec
   (name nil :type keyword :read-only t)
   (import-parser nil :type (or null function))
   (export-serializer nil :type (or null function))
@@ -29,11 +29,12 @@ EXPORT-SERIALIZER: function of one argument (target-stream) returning a serializ
 STREAMING-P: boolean, true if format supports constant-memory streaming
 SUPPORTS-EXPORT-P: boolean, true if format has export implementation
 Returns the created FORMAT-SPEC object."
-  (let ((fmt (make-format-spec name
-                          :import-parser import-parser
-                          :export-serializer export-serializer
-                          :streaming-p (or streaming-p nil)
-                          :supports-export-p (or supports-export-p nil))))
+  (let ((fmt (make-format-spec
+                   :name name
+                   :import-parser import-parser
+                   :export-serializer export-serializer
+                   :streaming-p (or streaming-p nil)
+                   :supports-export-p (or supports-export-p nil))))
     (setf (gethash name *format-registry*) fmt)
     fmt))
 

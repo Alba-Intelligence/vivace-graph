@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/test-mapping.lisp
 ;;;; Test for mapping DSL.
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;; Mock graph schema functions for testing
 (defun mock-list-vertex-types () '(person customer))

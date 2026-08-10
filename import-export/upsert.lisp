@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/upsert.lisp
 ;;;; Upsert logic with reconciliation support
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Upsert vertex

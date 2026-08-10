@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/coercions.lisp
 ;;;; Type coercion registry and built-in coercions.
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Coercion registry

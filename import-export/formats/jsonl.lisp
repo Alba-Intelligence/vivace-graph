@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/formats/jsonl.lisp
 ;;;; JSONL format implementation
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;;; ---------------------------------------------------------------------------
 ;;; JSONL Parser (import)

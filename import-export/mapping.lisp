@@ -1,7 +1,7 @@
 ;;;; graph-db/import-export/mapping.lisp
 ;;;; Mapping DSL parser, file loader, and validator.
 
-(in-package :graph-db.import-export)
+(in-package :graph-db/import-export)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Mapping spec representation
