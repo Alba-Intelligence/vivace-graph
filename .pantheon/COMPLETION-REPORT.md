@@ -12,7 +12,7 @@
 
 ### Key Deliverables
 - ✅ ASDF system `graph-db/import-export` with proper dependencies
-- ✅ Package `graph-db.import-export` with complete exports
+- ✅ Package `graph-db/import-export` with complete exports
 - ✅ Format protocol with generic functions and registry
 - ✅ Public API with `import-graph`/`export-graph` functions
 - ✅ Format registry with `register-format` function

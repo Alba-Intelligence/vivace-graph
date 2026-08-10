@@ -10,7 +10,7 @@ Establish the `graph-db/import-export` ASDF system with the format protocol (gen
 
 ## Acceptance criteria
 - [ ] New ASDF system `graph-db/import-export` defined in `graph-db.asd` with `:depends-on (:graph-db/core :cl-json :cl-ppcre)` and `:serial t`
-- [ ] Package `graph-db.import-export` defined in `import-export/package.lisp` exporting: `import-graph`, `export-graph`, `*format-registry*`, `register-format`, `format-streaming-p`, `format-supports-export`
+- [ ] Package `graph-db/import-export` defined in `import-export/package.lisp` exporting: `import-graph`, `export-graph`, `*format-registry*`, `register-format`, `format-streaming-p`, `format-supports-export`
 - [ ] Generic functions defined in `import-export/protocol.lisp`:
   - `import-format (format source graph mapping opts)` → (values stats resume-token)
   - `export-format (format target graph mapping opts)` → stats

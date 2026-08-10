@@ -47,5 +47,3 @@ VivaceGraph must plug into existing graph/database ecosystems. Import/export is 
 6. **Parquet library** — `cl-arrow` maturity? Fallback to `cffi` + Apache Arrow C++?
 7. **Geometry mapping** — CSV lat/lon columns → VivaceGraph `:type geometry` (Point) automatically?
 8. **ID reconciliation** — source IDs (Wikidata Q-numbers) → VivaceGraph UUIDs? Preserve as property?
-
----

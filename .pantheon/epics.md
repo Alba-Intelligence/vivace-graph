@@ -117,14 +117,14 @@ Ordered by **first-shippable-value**. Each epic is independently shippable — a
 ---
 
 ## Cut Scope (Explicitly Not In These Epics)
-| Item | Reason | Tracking |
-|------|--------|----------|
-| SPARQL endpoint ingestion | Non-goal per PRD | Separate PRD if needed |
-| Real-time CDC / change capture | Non-goal per PRD | Separate PRD |
-| Graph transformation/cleaning during import | User pre-processes | Document ETL best practices |
-| Visualization | Separate PRD | Epic in Web UI PRD |
-| Vector embeddings import/export | Separate PRD | "Vector Embeddings & Similarity Search" PRD |
-| TuringDB/Ladybug native export | No spec found | Deferred epic above |
+| Item                                        | Reason             | Tracking                                    |
+| ------------------------------------------- | ------------------ | ------------------------------------------- |
+| SPARQL endpoint ingestion                   | Non-goal per PRD   | Separate PRD if needed                      |
+| Real-time CDC / change capture              | Non-goal per PRD   | Separate PRD                                |
+| Graph transformation/cleaning during import | User pre-processes | Document ETL best practices                 |
+| Visualization                               | Separate PRD       | Epic in Web UI PRD                          |
+| Vector embeddings import/export             | Separate PRD       | "Vector Embeddings & Similarity Search" PRD |
+| TuringDB/Ladybug native export              | No spec found      | Deferred epic above                         |
 
 ---
 

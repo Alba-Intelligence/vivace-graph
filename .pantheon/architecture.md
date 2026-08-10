@@ -12,16 +12,16 @@ Core orchestration layer. Defines:
 
 ### 2. `import-export/formats` (sub-package)
 One file per format, loaded on demand:
-| File | Import | Export | Dependencies |
-|------|--------|--------|--------------|
-| `gml.lisp` | ✓ (wrap existing) | ✓ (wrap existing) | `graph-db/algorithms-io` |
-| `jsonl.lisp` | ✓ | ✓ | `cl-json` (already in core) |
-| `csv.lisp` | ✓ | ✓ | `cl-csv` (Quicklisp) |
-| `parquet.lisp` | ✓ | ✓ | `cl-arrow` or `cffi` + Apache Arrow C++ |
-| `wikidata.lisp` | ✓ | — | `cl-json`, streaming JSON parser |
-| `yago.lisp` | ✓ | — | `cl-csv` (TSV) or RDF parser |
-| `turingdb.lisp` | — | ? | Deferred pending spec |
-| `ladybug.lisp` | — | ? | Deferred pending spec |
+| File            | Import            | Export            | Dependencies                            |
+| --------------- | ----------------- | ----------------- | --------------------------------------- |
+| `gml.lisp`      | ✓ (wrap existing) | ✓ (wrap existing) | `graph-db/algorithms-io`                |
+| `jsonl.lisp`    | ✓                 | ✓                 | `cl-json` (already in core)             |
+| `csv.lisp`      | ✓                 | ✓                 | `cl-csv` (Quicklisp)                    |
+| `parquet.lisp`  | ✓                 | ✓                 | `cl-arrow` or `cffi` + Apache Arrow C++ |
+| `wikidata.lisp` | ✓                 | —                 | `cl-json`, streaming JSON parser        |
+| `yago.lisp`     | ✓                 | —                 | `cl-csv` (TSV) or RDF parser            |
+| `turingdb.lisp` | —                 | ?                 | Deferred pending spec                   |
+| `ladybug.lisp`  | —                 | ?                 | Deferred pending spec                   |
 
 ### 3. `import-export/streaming`
 - **Chunked transaction manager** — groups N records per transaction, commits, checkpoints resume token (file position + last committed IDs)
@@ -163,15 +163,15 @@ EXPORT (e.g., JSONL)
 
 ## Trade-offs
 
-| Decision | Rationale | Cost |
-|----------|-----------|------|
-| **Lisp mapping DSL + optional JSON/YAML** | Native Lisp users get full power; config-file users get portability | Two parsers to maintain |
-| **Chunked transactions (not single giant TX)** | MVCC + OCC: large TX = high conflict risk, huge read-set, memory pressure | More commits = slower; tunable `:chunk-size` |
-| **Reconciliation table on-disk (lhash)** | Survives crash, works for 100M+ records, same engine as vertex table | Extra disk I/O per chunk; mitigated by batching |
-| **Streaming JSONL/CSV/Parquet; DOM for GML** | GML is inherently hierarchical; JSONL/CSV/Parquet are record-oriented | GML import not constant-memory (acceptable: GML typically smaller) |
-| **Reuse `cl-json`, `cl-csv`; FFI only for Parquet** | Quicklisp packages exist and are mature | Parquet needs `cl-arrow` or Arrow C++ FFI — evaluate maturity |
-| **Wikidata via JSONL dump (not SPARQL)** | Streaming; no endpoint dependency; 100GB JSONL is standard | Must download dump first (external step) |
-| **Defer TuringDB/Ladybug export** | No documented wire format found | If spec appears later, add format file without core changes |
+| Decision                                            | Rationale                                                                 | Cost                                                               |
+| --------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **Lisp mapping DSL + optional JSON/YAML**           | Native Lisp users get full power; config-file users get portability       | Two parsers to maintain                                            |
+| **Chunked transactions (not single giant TX)**      | MVCC + OCC: large TX = high conflict risk, huge read-set, memory pressure | More commits = slower; tunable `:chunk-size`                       |
+| **Reconciliation table on-disk (lhash)**            | Survives crash, works for 100M+ records, same engine as vertex table      | Extra disk I/O per chunk; mitigated by batching                    |
+| **Streaming JSONL/CSV/Parquet; DOM for GML**        | GML is inherently hierarchical; JSONL/CSV/Parquet are record-oriented     | GML import not constant-memory (acceptable: GML typically smaller) |
+| **Reuse `cl-json`, `cl-csv`; FFI only for Parquet** | Quicklisp packages exist and are mature                                   | Parquet needs `cl-arrow` or Arrow C++ FFI — evaluate maturity      |
+| **Wikidata via JSONL dump (not SPARQL)**            | Streaming; no endpoint dependency; 100GB JSONL is standard                | Must download dump first (external step)                           |
+| **Defer TuringDB/Ladybug export**                   | No documented wire format found                                           | If spec appears later, add format file without core changes        |
 
 ---
 
@@ -206,27 +206,27 @@ EXPORT (e.g., JSONL)
 
 ## Implementation Phases
 
-| Phase | Deliverable | Formats |
-|-------|-------------|---------|
-| 1 | Core framework: protocol, mapping DSL, reconciliation table, chunked TX, streaming coordinator | — |
-| 2 | JSONL import/export (simplest, line-oriented) | JSONL |
-| 3 | CSV import/export (tabular, common) | CSV |
-| 4 | GML import/export (wrap existing `algorithms-io`) | GML |
-| 5 | Parquet import/export (evaluate `cl-arrow` vs Arrow C++ FFI) | Parquet |
-| 6 | Wikidata JSONL import (streaming, 100GB-scale) | Wikidata |
-| 7 | YAGO import (TSV/NTriples) | YAGO |
-| 8 | TuringDB/Ladybug export (if specs found) | (deferred) |
+| Phase | Deliverable                                                                                    | Formats    |
+| ----- | ---------------------------------------------------------------------------------------------- | ---------- |
+| 1     | Core framework: protocol, mapping DSL, reconciliation table, chunked TX, streaming coordinator | —          |
+| 2     | JSONL import/export (simplest, line-oriented)                                                  | JSONL      |
+| 3     | CSV import/export (tabular, common)                                                            | CSV        |
+| 4     | GML import/export (wrap existing `algorithms-io`)                                              | GML        |
+| 5     | Parquet import/export (evaluate `cl-arrow` vs Arrow C++ FFI)                                   | Parquet    |
+| 6     | Wikidata JSONL import (streaming, 100GB-scale)                                                 | Wikidata   |
+| 7     | YAGO import (TSV/NTriples)                                                                     | YAGO       |
+| 8     | TuringDB/Ladybug export (if specs found)                                                       | (deferred) |
 
 ---
 
 ## Dependencies (Quicklisp)
 
-| Package | Purpose | Status |
-|---------|---------|--------|
-| `cl-json` | JSON/JSONL parse + serialize | Already in core deps |
-| `cl-csv` | CSV parse + serialize | Add to `graph-db/import-export` |
-| `cl-arrow` | Parquet via Apache Arrow | Evaluate; optional |
-| `yason` / `jonathan` | Alternative JSON (faster) | Benchmark vs `cl-json` |
-| `gzip-stream` / `cl-bzip2` | Compressed Wikidata streams | Optional |
+| Package                    | Purpose                      | Status                          |
+| -------------------------- | ---------------------------- | ------------------------------- |
+| `cl-json`                  | JSON/JSONL parse + serialize | Already in core deps            |
+| `cl-csv`                   | CSV parse + serialize        | Add to `graph-db/import-export` |
+| `cl-arrow`                 | Parquet via Apache Arrow     | Evaluate; optional              |
+| `yason` / `jonathan`       | Alternative JSON (faster)    | Benchmark vs `cl-json`          |
+| `gzip-stream` / `cl-bzip2` | Compressed Wikidata streams  | Optional                        |
 
 No new core dependencies. `graph-db/import-export` system declares its own `:depends-on`.
