@@ -35,68 +35,67 @@
                ;; no-op log-stub instead.  Desktop/SBCL keeps real log4cl.
                #-graph-db-stub-log :log4cl
                :md5)
-  :components (;;(:file "uuid")
-               #+graph-db-stub-log (:file "log-stub")
-               (:file "package" #+graph-db-stub-log :depends-on #+graph-db-stub-log ("log-stub"))
-               (:file "cl-store-ecl" :depends-on ("package"))
-               (:file "globals" :depends-on ("package"))
-               (:file "conditions" :depends-on ("package"))
-               (:file "posix" :depends-on ("package"))
-               (:file "utilities" :depends-on ("globals"))
-               (:file "queue" :depends-on ("utilities"))
-               (:file "mailbox" :depends-on ("queue"))
-               #+(or sbcl lispworks ecl) (:file "rw-lock" :depends-on ("queue"))
-               #+(or sbcl lispworks ecl) (:file "mmap" :depends-on ("rw-lock" "posix"))
-               #-(or sbcl lispworks ecl) (:file "mmap" :depends-on ("queue" "posix"))
-               (:file "pcons" :depends-on ("mmap"))
-               (:file "node-id" :depends-on ("package" "posix"))
-               (:file "buffer-pool" :depends-on ("pcons" "node-id"))
-               (:file "serialize" :depends-on ("conditions" "buffer-pool" "cl-store-ecl"))
-               (:file "geometry" :depends-on ("serialize"))
-               (:file "geometry-ops" :depends-on ("geometry"))
-               (:file "geohash" :depends-on ("package"))
-               (:file "linear-hash" :depends-on ("serialize"))
-               (:file "allocator" :depends-on ("serialize"))
-               (:file "graph-class" :depends-on ("globals"))
-               (:file "cursors" :depends-on ("package"))
-               (:file "skip-list" :depends-on ("allocator" "linear-hash"))
-               (:file "skip-list-cursors" :depends-on ("skip-list" "cursors"))
-               (:file "mem-skip-list" :depends-on ("skip-list-cursors"))
+  :components (;;(:file "src/utils/uuid")
+               #+graph-db-stub-log (:file "src/core/base/log-stub")
+               (:file "src/core/base/package" #+graph-db-stub-log :depends-on #+graph-db-stub-log ("src/core/base/log-stub"))
+               (:file "src/core/base/cl-store-ecl" :depends-on ("src/core/base/package"))
+               (:file "src/core/base/globals" :depends-on ("src/core/base/package"))
+               (:file "src/core/base/conditions" :depends-on ("src/core/base/package"))
+               (:file "src/core/memory/posix" :depends-on ("src/core/base/package"))
+               (:file "src/core/base/utilities" :depends-on ("src/core/base/globals"))
+               (:file "src/core/base/queue" :depends-on ("src/core/base/utilities"))
+               (:file "src/core/base/mailbox" :depends-on ("src/core/base/queue"))
+               #+(or sbcl lispworks ecl) (:file "src/core/memory/rw-lock" :depends-on ("src/core/base/queue"))
+               #+(or sbcl lispworks ecl) (:file "src/core/memory/mmap" :depends-on ("src/core/memory/rw-lock" "src/core/memory/posix"))
+               #-(or sbcl lispworks ecl) (:file "src/core/memory/mmap" :depends-on ("src/core/base/queue" "src/core/memory/posix"))
+               (:file "src/core/storage/pcons" :depends-on ("src/core/memory/mmap"))
+               (:file "src/core/base/node-id" :depends-on ("src/core/base/package" "src/core/memory/posix"))
+               (:file "src/core/storage/buffer-pool" :depends-on ("src/core/storage/pcons" "src/core/base/node-id"))
+               (:file "src/core/storage/serialize" :depends-on ("src/core/base/conditions" "src/core/storage/buffer-pool" "src/core/base/cl-store-ecl"))
+               (:file "src/spatial/geometry/geometry" :depends-on ("src/core/storage/serialize"))
+               (:file "src/spatial/geometry/geometry-ops" :depends-on ("src/spatial/geometry/geometry"))
+               (:file "src/spatial/geometry/geohash" :depends-on ("src/core/base/package"))
+               (:file "src/core/indexes/linear-hash" :depends-on ("src/core/storage/serialize"))
+               (:file "src/core/storage/allocator" :depends-on ("src/core/storage/serialize"))
+               (:file "src/graph/model/graph-class" :depends-on ("src/core/base/globals"))
+               (:file "src/core/indexes/cursors" :depends-on ("src/core/base/package"))
+               (:file "src/core/indexes/skip-list" :depends-on ("src/core/storage/allocator" "src/core/indexes/linear-hash"))
+               (:file "src/core/indexes/skip-list-cursors" :depends-on ("src/core/indexes/skip-list" "src/core/indexes/cursors"))
+               (:file "src/core/indexes/mem-skip-list" :depends-on ("src/core/indexes/skip-list-cursors"))
                ;; EXPERIMENTAL third ordered-map backend: an mmap-backed B+ tree
                ;; (locality-oriented alternative to the skip list; see
                ;; docs/next-work-handoff.md).  Reuses skip-list-cursors' SKIP-NODE
                ;; struct + cursor protocol; lives in the same heap as the skip list.
-               (:file "bplus-tree" :depends-on ("skip-list-cursors" "allocator"))
-               (:file "spatial-index" :depends-on ("skip-list-cursors" "geometry" "geohash" "geometry-ops"))
-               (:file "index-list" :depends-on ("linear-hash" "allocator"))
-               (:file "ve-index" :depends-on ("skip-list-cursors" "index-list" "graph-class"))
-               (:file "vev-index" :depends-on ("index-list" "graph-class"))
-               (:file "type-index" :depends-on ("vev-index"))
-               (:file "graph" :depends-on
-                      ("ve-index" "vev-index" "type-index" "linear-hash" "allocator"
-                       "spatial-index"))
-               (:file "stats" :depends-on ("graph"))
-               (:file "schema" :depends-on ("stats"))
-               (:file "node-class" :depends-on ("schema"))
-               (:file "views" :depends-on ("node-class"))
-               (:file "primitive-node" :depends-on ("views"))
-               (:file "vertex" :depends-on ("primitive-node"))
-               (:file "edge" :depends-on ("vertex"))
-               (:file "gc" :depends-on ("edge" "vertex" "views"))
-               (:file "transactions" :depends-on ("graph-class" "type-index" "vev-index" "ve-index" "edge" "vertex" "gc" "spatial-index" "posix"))
-               (:file "transaction-restore" :depends-on ("transactions"))
-               (:file "transaction-log-streaming" :depends-on ("transactions"))
-               (:file "backup" :depends-on ("edge"))
-               (:file "replication" :depends-on ("backup"))
-               (:file "txn-log" :depends-on ("replication"))
-               (:file "functor" :depends-on ("vertex" "edge" "views" "schema"))
-               (:file "prologc" :depends-on ("functor"))
-               (:file "prolog-functors" :depends-on ("prologc" "geometry" "geometry-ops"))
-               (:file "spatial-query" :depends-on ("prolog-functors" "transactions" "spatial-index" "geometry-ops"))
-               (:file "interface" :depends-on ("schema" "edge" "vertex" "views"))
-               (:file "traverse" :depends-on ("interface"))
-               (:file "memory-graph" :depends-on ("traverse" "transactions" "graph" "mem-skip-list"))
-               (:file "unique-constraint" :depends-on ("traverse" "transactions" "graph" "memory-graph" "node-class" "schema"))))
+               (:file "src/core/indexes/bplus-tree" :depends-on ("src/core/indexes/skip-list-cursors" "src/core/storage/allocator"))
+               (:file "src/spatial/index/spatial-index" :depends-on ("src/core/indexes/skip-list-cursors" "src/spatial/geometry/geometry" "src/spatial/geometry/geohash" "src/spatial/geometry/geometry-ops"))
+               (:file "src/core/indexes/index-list" :depends-on ("src/core/indexes/linear-hash" "src/core/storage/allocator"))
+               (:file "src/graph/indexes/ve-index" :depends-on ("src/core/indexes/skip-list-cursors" "src/core/indexes/index-list" "src/graph/model/graph-class"))
+               (:file "src/graph/indexes/vev-index" :depends-on ("src/core/indexes/index-list" "src/graph/model/graph-class"))
+               (:file "src/graph/indexes/type-index" :depends-on ("src/graph/indexes/vev-index"))
+               (:file "src/graph/model/graph" :depends-on ("src/graph/indexes/ve-index" "src/graph/indexes/vev-index" "src/graph/indexes/type-index" "src/core/indexes/linear-hash" "src/core/storage/allocator"
+                       "src/spatial/index/spatial-index"))
+               (:file "src/graph/model/stats" :depends-on ("src/graph/model/graph"))
+               (:file "src/graph/model/schema" :depends-on ("src/graph/model/stats"))
+               (:file "src/graph/model/node-class" :depends-on ("src/graph/model/schema"))
+               (:file "src/graph/indexes/views" :depends-on ("src/graph/model/node-class"))
+               (:file "src/graph/model/primitive-node" :depends-on ("src/graph/indexes/views"))
+               (:file "src/graph/model/vertex" :depends-on ("src/graph/model/primitive-node"))
+               (:file "src/graph/model/edge" :depends-on ("src/graph/model/vertex"))
+               (:file "src/graph/model/gc" :depends-on ("src/graph/model/edge" "src/graph/model/vertex" "src/graph/indexes/views"))
+               (:file "src/graph/transactions/transactions" :depends-on ("src/graph/model/graph-class" "src/graph/indexes/type-index" "src/graph/indexes/vev-index" "src/graph/indexes/ve-index" "src/graph/model/edge" "src/graph/model/vertex" "src/graph/model/gc" "src/spatial/index/spatial-index" "src/core/memory/posix"))
+               (:file "src/graph/transactions/transaction-restore" :depends-on ("src/graph/transactions/transactions"))
+               (:file "src/graph/transactions/transaction-log-streaming" :depends-on ("src/graph/transactions/transactions"))
+               (:file "src/graph/transactions/backup" :depends-on ("src/graph/model/edge"))
+               (:file "src/graph/transactions/replication" :depends-on ("src/graph/transactions/backup"))
+               (:file "src/graph/transactions/txn-log" :depends-on ("src/graph/transactions/replication"))
+               (:file "src/graph/prolog/functor" :depends-on ("src/graph/model/vertex" "src/graph/model/edge" "src/graph/indexes/views" "src/graph/model/schema"))
+               (:file "src/graph/prolog/prologc" :depends-on ("src/graph/prolog/functor"))
+               (:file "src/graph/prolog/prolog-functors" :depends-on ("src/graph/prolog/prologc" "src/spatial/geometry/geometry" "src/spatial/geometry/geometry-ops"))
+               (:file "src/spatial/query/spatial-query" :depends-on ("src/graph/prolog/prolog-functors" "src/graph/transactions/transactions" "src/spatial/index/spatial-index" "src/spatial/geometry/geometry-ops"))
+               (:file "src/graph/query/interface" :depends-on ("src/graph/model/schema" "src/graph/model/edge" "src/graph/model/vertex" "src/graph/indexes/views"))
+               (:file "src/graph/query/traverse" :depends-on ("src/graph/query/interface"))
+               (:file "src/graph/query/memory-graph" :depends-on ("src/graph/query/traverse" "src/graph/transactions/transactions" "src/graph/model/graph" "src/core/indexes/mem-skip-list"))
+               (:file "src/graph/query/unique-constraint" :depends-on ("src/graph/query/traverse" "src/graph/transactions/transactions" "src/graph/model/graph" "src/graph/query/memory-graph" "src/graph/model/node-class" "src/graph/model/schema"))))
 
 ;; REPLICATION: core + the usocket network transport, but NO HTTP server.  This is
 ;; the master/slave + hub/peer replication layer -- transaction-streaming (usocket
@@ -114,13 +113,13 @@
   :depends-on (:graph-db/core
                :usocket)
   :serial t
-  :components ((:file "transaction-streaming")
+  :components ((:file "src/graph/transactions/transaction-streaming")
                ;; peer replication Branch B: the pure per-field conflict resolver
                ;; (loaded before the transport that will call it).
-               (:file "peer-merge")
+               (:file "src/graph/transactions/peer-merge")
                ;; peer replication transport (hub/device pull); needs usocket and
                ;; the master/slave packet primitives in transaction-streaming.
-               (:file "peer-streaming")))
+               (:file "src/graph/transactions/peer-streaming")))
 
 ;; FULL: replication + the HTTP API leaf (rest, clack/ningle).  graph-db/replication
 ;; (and transitively graph-db/core) has already compiled+loaded the engine + transport,
@@ -145,7 +144,7 @@
                :usocket
                :trivial-shell)
   :serial t
-  :components ((:file "rest"))
+  :components ((:file "src/api/rest"))
   :in-order-to ((test-op (test-op :graph-db/test))))
 
 (defsystem graph-db/concurrency-test
@@ -154,7 +153,7 @@
   :depends-on (:graph-db :fiveam :bordeaux-threads)
   :pathname "tests/concurrency/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "helpers")
                (:file "rw-lock-tests")
@@ -175,7 +174,7 @@
   :depends-on (:graph-db :fiveam :bordeaux-threads)
   :pathname "tests/acid/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "atomicity-tests")
                (:file "isolation-tests")
@@ -190,7 +189,7 @@
   :depends-on (:graph-db :fiveam)
   :pathname "tests/stress/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "storage-stress")
                (:file "graph-stress")
@@ -206,7 +205,7 @@
   :depends-on (:graph-db :fiveam :bordeaux-threads)
   :pathname "tests/concurrent-stress/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "graph-storm")
                (:file "transaction-storm")
@@ -225,7 +224,7 @@
   :depends-on (:graph-db :bordeaux-threads)
   :pathname "tests/perf/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "benchmarks")
                ;; B+ tree vs skip-list side-by-side (in-package :graph-db so it can
@@ -273,7 +272,7 @@
   :depends-on (:graph-db/algorithms :graph-db/algorithms-io :fiveam)
   :pathname "tests/algorithms/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "fixtures")
                (:file "fib-heap-tests")
@@ -312,7 +311,7 @@
   :depends-on (:graph-db/geos :fiveam :bordeaux-threads)
   :pathname "tests/geos/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "load-tests")
                (:file "bridge-tests")
@@ -333,7 +332,7 @@
   :depends-on (:graph-db :fiveam :drakma)
   :pathname "tests/"
   :serial t
-  :components ((:file "package")
+  :components ((:file "src/core/base/package")
                (:file "suite")
                (:file "serialize-tests")
                (:file "geometry-tests")

@@ -9,7 +9,7 @@
   #+ccl (make-hash-table :shared t :test 'equalp)
   #+ecl (make-hash-table :test 'equalp))
 (defvar *rest-passwd-file* "rpasswd")
-(defvar *htpasswd-bin* "/usr/bin/htpasswd")
+(defvar *htpasswd-bin* "/usr/bin/env htpasswd")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Named parameterized queries (#44).

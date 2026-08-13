@@ -1,0 +1,7 @@
+(require :asdf)
+(handler-bind ((error (lambda (c) 
+                        (format t "~&Error: ~A~%" c)
+                        (invoke-restart (find-restart 'continue)))))
+  (asdf:load-system :graph-db/core))
+(format t "~&SUCCESS: graph-db/core loaded~%")
+(quit)

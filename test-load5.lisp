@@ -1,0 +1,15 @@
+(require :asdf)
+;; Add current directory to source registry
+(pushnew (make-pathname :directory '(:absolute)) 
+         asdf:*central-registry* 
+         :test #'equalp)
+(let ((sys (asdf:find-system :graph-db/core)))
+  (if sys
+      (format t "~&SUCCESS: Found system ~A~%" sys)
+      (format t "~&ERROR: Could not find system~%")))
+(handler-bind ((error (lambda (c) 
+                        (format t "~&Error during load: ~A~%" c)
+                        (invoke-restart (find-restart 'continue)))))
+  (asdf:load-system :graph-db/core))
+(format t "~&Attempted to load graph-db/core~%")
+(quit)
