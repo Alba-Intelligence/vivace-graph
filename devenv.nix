@@ -6,6 +6,11 @@
   ...
 }:
 {
+
+languages = {
+    elixir = {enable = true; lsp.enable = true;};
+  };
+
   # Environment variables
   env = {
     GREET = "devenv";

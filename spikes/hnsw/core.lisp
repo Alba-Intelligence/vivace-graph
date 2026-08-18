@@ -1,302 +1,292 @@
 ;;; HNSW Spike - Core Algorithms
 ;;; HNSW (Hierarchical Navigable Small World) graph algorithms
 ;;;
-;;; Documentation:
-;;;   This file implements the core HNSW algorithms for approximate nearest
-;;; neighbor search. HNSW builds a multi-layer graph with random element
-;;; for ef/accuracy tradeoff, providing O(log N) search complexity.
-;;;
 ;;; Algorithm Reference:
 ;;;   Malkov and Yashunsky (2016) "Efficient and robust approximate nearest
 ;;;   neighbor search using Hierarchical Navigable Small World graphs"
-;;;
-;;; Key Parameters:
-;;;   *M*       - Max neighbors per level (default: 16)
-;;;             Controls graph connectivity and memory usage
-;;; *ef-construction* - ef for building phase (default: 200)
-;;;                   Larger values produce higher quality graphs
-;;; *ef-search* - ef for search phase (default: 50)
-;;;               Larger values improve search accuracy but reduce speed
+
+(in-package :hnsw-spike)
 
 ;;; ============================================================================
 ;;; create-hnsw-index
 ;;; ============================================================================
-;;;
-;;; Create and return a new empty HNSW index.
-;;;
-;;; Algorithm:
-;;;   1. Initialize hnw-index struct with default configuration
-;;;   2. Set dimension from the dim argument
-;;;   3. Set metric function based on the metric symbol
-;;;   4. Create empty hash table for node storage
-;;;
-;;; Arguments:
-;;;   dim   - Vector dimensionality (e.g., 128, 768, 1536); required
-;;;   metric - Distance metric symbol (default: :cosine)
-;;;            :cosine - Cosine distance
-;;;            :l2   - L2/Euclidean distance
-;;;            :dot   - Dot product
-;;
-;;; Key Arguments (with defaults):
-;;;   *M*           - Max neighbors per level (default 16);
-;;;                 Controls graph connectivity; higher = more connections
-;;;   *ef-construction* - ef for graph build phase (default 200);
-;;;                     Larger = higher quality graph, slower build
-;;;   *ef-search*   - ef for search phase (default 50);
-;;;                   Larger = more accurate search, slower query
-;;
-;;; Returns: hnw-index struct with empty node hash table and configured metric
-;;
-;;; Example:
-;;;   (let ((idx (create-hnsw-index 768 :cosine :m 16 :ef-construction 200 :ef-search 50)))
-;;;     (hnsw-insert idx (make-array 768 :initial-element 0.5) 0))
-;;;
-;;; Note: Parameters m and ef should be chosen based on dataset size and
-;;; desired accuracy/speed tradeoff. Typical values: M∈[16,64], ef∈[40,2000].
+(defun create-hnsw-index (dim &key (metric :cosine))
+  "Create and return a new empty HNSW index."
+  (let ((metric-fn (case metric (:cosine #'hnsw-spike:cosine-distance)
+                             (:l2 #'hnsw-spike:l2-distance)
+                             (:dot #'hnsw-spike:dot-distance)
+                             (t (error "Unknown metric: ~A" metric)))))
+    (make-hnsw-index :dim dim
+                     :metric-fn metric-fn
+                     :nodes (make-hash-table)
+                     :entry-point nil
+                     :max-level 0)))
 
 ;;; ============================================================================
 ;;; random-level
 ;;; ============================================================================
-;;;
-;;; Generate random HNSW layer assignment for a new node.
-;;;
-;;; Algorithm:
-;;;   Uses exponential distribution with p=0.5 probability per level.
-;;;   Each level has 50% chance of being selected, creating a geometrically
-;;;   distributed level assignment. This gives O(log N) graph depth expected.
-;;;
-;;; Arguments:
-;;;   max-level  - Maximum layer level to assign (fixnum)
-;;;              Typically computed as floor(log2(N)) for N nodes
-;;
-;;; Returns: Integer layer level in range [0, max-level]
-;;;
-;;; Algorithm Details:
-;;;   The loop condition `(while (< (random 1.0) 0.5))` gives each level
-;;;   a 50% probability of being selected. This creates the random level
-;;;   distribution that is key to HNSW's search efficiency and balanced
-;;;   graph growth. Nodes with higher levels appear in fewer search paths
-;;;   but provide long-range connectivity.
-;;;
-;;; Note: This function uses the global parameter *max-level* which should
-;;; be set appropriately for the expected dataset size.
+(defun random-level (max-level)
+  "Generate random HNSW layer assignment for a new node."
+  (check-type max-level fixnum)
+  (let ((level 0))
+    (loop while (< (random 1.0) 0.5) do (incf level))
+    (min level max-level)))
 
 ;;; ============================================================================
 ;;; search-layer
 ;;; ============================================================================
-;;;
-;;; Search a single HNSW layer using greedy descent.
-;;;
-;;; Algorithm (High-level):
-;;;   1. Start with entry-point node as initial candidate
-;;;   2. For each candidate node: compute distance to query vector
-;;;   3. Select the best (closest) candidate as next step
-;;;   4. Move to that candidate and repeat at current layer
-;;;   5. If no improving candidate found, prepare to descend to next layer
-;;;
-;;; Arguments:
-;;;   index    - hnw-index struct (must be initialized)
-;;;   vec      - Query vector (simple-array single-float, dimension dim)
-;;;   ef       - Max candidates to maintain (controls accuracy/speed tradeoff)
-;;;            Typical: *ef-search* or 50-100
-;;;   metric-fn - Distance function (obtained from index metric-fn slot)
-;;
-;;; Returns: List of candidate nodes within this layer, sorted by distance
-;;
-;;; Algorithm Details:
-;;;   The greedy descent algorithm:
-;;;   1. Initialize candidates with entry-point node
-;;;   2. While can improve: find nearest neighbor in current layer
-;;;   3. If improved: move to that neighbor, continue search at same layer
-;;;   4. If not improved: mark layer as exhausted, descend to next level
-;;;   5. Collect all candidates visited across layers
-;;;
-;;;   This function implements one level of the multi-layer HNSW search.
-;;;   Full search descends from top max-level down to layer 0, collecting
-;;;   candidates at each level and using them as starting points for the
-;;;   next lower level.
-;;;
-;;; Performance: O(K * average_degree) per layer examination, where K is
-;;; the number of nodes examined before finding no improvement. The overall
-;;; search complexity is O(log N) expected with proper ef parameter tuning.
-;;;
-;;; Note: This is a single-layer component; full HNSW search requires
-;;; descending through all layers from max-level to 0.
+(defun search-layer (index query-vec ef &optional (result-so-far nil))
+  "Search a single HNSW layer for up to ef candidates near the query vector.
+Returns (candidates . best-distance) where candidates is a list of node IDs."
+    (declare (type hnsw-index index)
+             (type (simple-array single-float) query-vec)
+             (type fixnum ef)
+             (ignore ef result-so-far))
+  (let ((candidates (make-hash-table :test 'equalp))
+        (best-distance most-positive-single-float)
+        (current-node (gethash (hnsw-index-entry-point index) (hnsw-index-nodes index) ))
+        (dist-fn (hnsw-index-metric-fn index)))
+    (when current-node
+      (let* ((current-vector (hnsw-node-vector current-node))
+            (start-dist (funcall dist-fn current-vector query-vec)))
+        (setf (gethash (hnsw-node-id current-node) candidates) start-dist)
+        (when (< start-dist best-distance)
+              (setf best-distance start-dist))
+            
+                ;; Greedy descent: at each step, examine all neighbors at this level
+        (loop while current-node
+          do (let ((current-vector (hnsw-node-vector current-node))
+                   (neighbors (get-neighbors current-node (hnsw-node-level current-node) index)))
+               (when neighbors
+                (loop for n-id in neighbors do
+                  (let ((n (gethash n-id (hnsw-index-nodes index))))
+                    (when n
+                      (let* ((n-vector (hnsw-node-vector n))
+                             (current-distance (funcall dist-fn n-vector query-vec)))
+                        (when (and (not (gethash n-id candidates))
+                                    (< current-distance best-distance))
+                          (setf (gethash n-id candidates) current-distance
+                                best-distance current-distance))))))
+                                
+                ;; Move to best neighbor for next iteration
+                (let ((best-node (get-best-neighbor current-node query-vec index dist-fn)))
+                  (if best-node
+                      (setf current-node best-node)
+                      (setf current-node nil))))))
+
+      ;; Return sorted candidates by distance (closest first)
+      (let ((sorted (sort (loop for id being the hash-values of candidates
+                                collect (list id (gethash id candidates)))
+                        #'< :key #'car)))
+        (values sorted best-distance))))))
+
+;;; ============================================================================
+;;; get-neighbors
+;;; ============================================================================
+
+(defun get-neighbors (node level index)
+  "Get neighbor node IDs of NODE at LEVEL. Returns list of node IDs or nil is none is found."
+  (if (and node (< level (array-dimension (hnsw-node-neighbors node) 0)))
+    (aref (hnsw-node-neighbors node) level)
+    nil))
+
+;;; ============================================================================
+;;; get-best-neighbor
+;;; ============================================================================
+
+(defun get-best-neighbor (node query-vec index dist-fn)
+  "Get the best (closest) neighbor node of NODE for a given query vector."
+    (declare (type hnsw-node node)
+             (type (simple-array single-float) query-vec)
+             (type hnsw-index index))
+  (let* ((neighbors (get-neighbors node
+                                    (hnsw-node-level node)
+                                    index))
+         (best-node nil)
+         (best-dist most-positive-single-float))
+    (when neighbors
+      (dolist (n-id neighbors)
+        (let ((n (gethash n-id (hnsw-index-nodes index))))
+          (when n
+            (let ((d (funcall dist-fn query-vec (hnsw-node-vector n))))
+              (when (< d best-dist)
+                (setf best-dist d best-node n)))))))
+    best-node))
+
+;;; ============================================================================
+;;; search-layer-for-insert
+;;; ============================================================================
+
+(defun search-layer-for-insert (index query-vec entry-id level metric-fn)
+  "Search a layer for insertion. Returns list of (distance . node-id) sorted by distance."
+    (declare (type hnsw-index index)
+            (type (simple-array single-float) query-vec)
+            (type fixnum entry-id level))
+  (let ((candidates (list entry-id))
+        (visited (make-hash-table)))
+    (setf (gethash entry-id visited) t)
+    (loop while candidates do
+      (let ((current-id (pop candidates)))
+        (let ((node (gethash current-id (hnsw-index-nodes index))))
+          (when node
+            ;; Add neighbors to candidate list
+
+
+            (let ((neighbors (get-neighbors node level index)))
+              (dolist (n-id neighbors)
+                (unless (gethash n-id visited)
+                  (setf (gethash n-id visited) t)
+                  (push n-id candidates)))))))
+
+    ;; Return all visited node IDs sorted by distance
+    (let ((result (loop for node-id being the hash-keys of visited
+                        with node = (gethash node-id (hnsw-index-nodes index))
+                        when node
+                        collect (list (funcall metric-fn (hnsw-node-vector node) query-vec) node-id))))
+        
+        (sort result #'< :key #'first)))))
+
+;;; ============================================================================
+;;; greedy-descent
+;;; ============================================================================
+(defun greedy-descent (index query-vec current-id level metric-fn visited)
+  "Perform greedy descent at a single layer. Returns the best neighbor ID found."
+    (declare (type hnsw-index index)
+             (type (simple-array single-float) query-vec)
+             (type fixnum current-id level)
+             (type hash-table visited))
+  (let ((best-id current-id)
+        (best-dist (when current-id
+                     (let ((node (gethash current-id (hnsw-index-nodes index))))
+                       (when node
+                         (funcall metric-fn (hnsw-node-vector node) query-vec))))))
+    (when best-dist
+      (loop while current-id do
+        (let ((neighbors (get-neighbors current-id level index)))
+          (let ((improved-id nil)
+                (improved-dist best-dist))
+            (dolist (n-id neighbors)
+              (unless (gethash n-id visited)
+                (setf (gethash n-id visited) t)
+                (let ((n (gethash n-id (hnsw-index-nodes index))))
+                  (when n
+                    (let ((ndist (funcall metric-fn (hnsw-node-vector n) query-vec)))
+                      (when (< ndist improved-dist)
+                        (setf improved-id n-id improved-dist ndist)))))))
+            (if improved-id
+                (setf current-id improved-id best-dist improved-dist)
+                (return))))))
+    best-id))
 
 ;;; ============================================================================
 ;;; hnsw-insert
 ;;; ============================================================================
-;;;
-;;; Insert a node into the HNSW graph.
-;;;
-;;; Algorithm (High-level steps):
-;;;   1. Generate random layer level for the new node via random-level
-;;;   2. Create node struct with vector, id, level, and empty neighbor lists
-;;;   3. Insert node into hash table by ID
-;;;   4. Set entry-point if this is the first node
-;;;   5. For each level from top node's level down to 0:
-;;;      a. Search current layer to find insertion point
-;;;      b. Connect new node to M nearest neighbors at this level
-;;;      c. Update existing neighbors' connections to include new node
-;;;
-;;; Arguments:
-;;;   index    - hnw-index struct (must be from create-hnsw-index)
-;;;   vector   - Feature vector (simple-array single-float, dimension dim)
-;;;   id       - Unique node identifier (fixnum or hashable type)
-;;
-;;; Returns: NIL (modifies index in-place)
-;;
-;;; Algorithm Details:
-;;;   Full HNSW insertion involves navigational steps:
-;;;   1. Start at entry-point, perform greedy descent to layer 0
-;;;   2. At each level l from top to 0:
-;;;      - Examine node's neighbors at level l
-;;;      - Find the closest neighbor to the new vector
-;;;      - Add new node as neighbor, prune to maintain *M* connections
-;;;      - Update existing neighbors' neighbor lists to include new node
-;;;   3. The new node's neighbor list at each level replaces the worst
-;;;      existing connections, maintaining *M*-limited connectivity
-;;;
-;;;   The connect-neighbors function handles the detailed neighbor list
-;;;   updates, ensuring that both the new node and existing nodes have
-;;;   consistent neighbor references at each level.
-;;;
-;;; Performance: O(log N) expected for insertion with proper pruning.
-;;; The dominant cost is the layer-by-layer navigation and neighbor list
-;;; updates. Insertion time grows slowly with dataset size due to the
-;;; logarithmic graph depth.
-;;;
-;;; Note: The function uses global parameters *M*, *ef-construction*, and
-;;; *max-level*. All must be set appropriately before insertion operations.
+(defun hnsw-insert (index vector id)
+  "Insert a node into the HNSW graph and return its ID."
+  (declare (type hnsw-index index)
+           (type (simple-array single-float) vector)
+           (type fixnum id))
+
+  (let* ((max-lvl (max 0 (hnsw-index-max-level index)))
+         (node-level (random-level max-lvl))
+         (neighbors-vec (make-array (1+ node-level) :initial-element nil))
+         (node (make-hnsw-node :id id
+                               :vector vector
+                               :level node-level
+                               :neighbors neighbors-vec)))
+    ;; Add {id => node} to the index hash table
+    (setf (gethash id (hnsw-index-nodes index)) node)
+    
+    ;; Set entry-point if first node (store the NODE, not just the ID)
+    (unless (hnsw-index-entry-point index)
+      (setf (hnsw-index-entry-point index) id
+            (gethash id (hnsw-index-nodes index)) node))
+    
+    ;; Update max-level
+    ;; FIXME: 
+    ;;   - this is probably useless since node-level = (random-level (hnsw-index-max-level index))
+    (when (> node-level (hnsw-index-max-level index))
+      (setf (hnsw-index-max-level index) node-level))
+    
+    ;; For each level from current max down to node level, connect neighbors
+    (let ((metric-fn (hnsw-index-metric-fn index))
+          (entry-id (hnsw-index-entry-point index)))
+
+      (loop for level from (hnsw-index-max-level index) downto 0 do
+        (when (>= level node-level)
+          ;; Search this layer for nearest neighbors
+          (let ((candidates (search-layer-for-insert index vector entry-id level metric-fn)))
+            (when candidates
+              (let ((top-candidates (subseq candidates 0 (min (length candidates) *M*))))
+                ;; Add neighbors to new node (using IDs)
+                (setf (aref neighbors-vec level) (mapcar #'second top-candidates))
+                
+                ;; Add new node as neighbor to each existing neighbor
+                (dolist (n-id (mapcar #'second top-candidates))
+                  (let ((n (gethash n-id (hnsw-index-nodes index))))
+                    (when n
+                      (when (<= (array-dimension (hnsw-node-neighbors n) 0) level)
+                        (adjust-array (hnsw-node-neighbors n) (1+ level) :initial-element nil))
+                      (unless (member id (aref (hnsw-node-neighbors n) level))
+                        (push id (aref (hnsw-node-neighbors n) level)))))))))))
+    
+    ;; Update entry point if this node is at the highest level (store NODE)
+    (when (= node-level (hnsw-index-max-level index))
+      (setf (gethash (hnsw-index-entry-point index) (hnsw-index-nodes index)) node))
+    id)))
 
 ;;; ============================================================================
 ;;; hnsw-search
 ;;; ============================================================================
-;;;
-;;; Find k nearest neighbors using HNSW greedy descent search.
-;;;
-;;; Algorithm:
-;;;   1. Set ef to *ef-search* for candidate collection
-;;;   2. Search the HNSW layer structure starting from entry-point
-;;;   3. Collect all candidates within the ef search boundary
-;;;   4. Sort candidates by distance to query vector
-;;;   5. Return top-k results (or fewer if fewer than k nodes exist)
-;;
-;;; Arguments:
-;;;   index    - hnw-index struct (must be initialized with nodes)
-;;;   vector   - Query vector (simple-array single-float, dimension dim)
-;;;   k        - Number of neighbors to return (fixnum, default: 10)
-;;
-;;; Returns: Vector of up to k hnsw-node structs, sorted by distance
-;;;          (closest first). Vector is empty if no nodes in index.
-;;
-;;; Algorithm Details:
-;;;   The HNSW search procedure:
-;;;   1. Start at entry-point node, set current layer to max-level
-;;;   2. Perform greedy descent at current layer:
-;;;      a. Examine all neighbors of current node
-;;;      b. Move to closest neighbor if it improves distance
-;;;      c. Otherwise, mark current position and descend to next layer
-;;;   3. Collect all nodes visited during descent as candidates
-;;;   4. After reaching layer 0, sort candidates by distance
-;;;   5. Return top-k from sorted candidates, respecting ef-search limit
-;;
-;;;   The ef-search parameter controls how many candidates are maintained
-;;;   during search. Larger ef values improve accuracy at the cost of speed.
-;;;   Typical values: 10-100 depending on accuracy requirements.
-;;;
-;;; Performance: O(log N) expected per query with proper ef parameter.
-;;; The search time is largely independent of dataset size due to the
-;;; multi-layer graph structure and greedy descent navigation.
-;;;
-;;; Note: Uses global parameters *ef-search*, *M*, and the index's
-;;; metric-fn. Results are approximate; exact NN would require linear scan.
+(defun hnsw-search (index query-vec k &key (ef *ef-search*))
+  (declare (type hnsw-index index)
+           (type (simple-array single-float) query-vec)
+           (type fixnum k ef)
+           (ignore ef))
 
-;;; ============================================================================
-;;; hnsw-insert (original definition)
-;;; ============================================================================
-;;;
-;;; Insert a node into the HNSW graph.
-;;;
-;;; Algorithm (High-level steps):
-;;;   1. Generate random layer level for the new node via random-level
-;;;   2. Create node struct with vector, id, level, and empty neighbor lists
-;;;   2. Insert node into hash table by ID
-;;;   4. Set entry-point if this is the first node
-;;;   5. For each level from top to node's level:
-;;;      - Search current layer to find insertion point
-;;;      - Connect new node to M nearest neighbors at this level
-;;;      - Update existing neighbors' connections to include new node
-;;
-;;; Arguments:
-;;;   index    - hnw-index struct (must be from create-hnsw-index)
-;;;   vector   - Feature vector (simple-array single-float, dimension dim)
-;;;   id       - Unique node identifier (fixnum or hashable type)
-;;
-;;; Returns: NIL (modifies index in-place)
-;;
-;;; Algorithm Details:
-;;;   The full HNSW insertion involves navigational steps:
-;;;   1. Start at entry-point, perform greedy descent to layer 0
-;;;   2. At each level l from top to 0:
-;;;      - Examine node's neighbors at level l
-;;;      - Find the closest neighbor to the new vector
-;;;      - Add new node as neighbor, prune to maintain *M* connections
-;;;      - Update existing neighbors' neighbor lists to include new node
-;;;
-;;;   The connect-neighbors function handles the detailed neighbor list
-;;;   updates, ensuring that both the new node and existing nodes have
-;;;   consistent neighbor references at each level.
-;;;
-;;; Performance: O(log N) expected for insertion with proper pruning.
-;;; The dominant cost is the layer-by-layer navigation and neighbor list
-;;; updates. Insertion time grows slowly with dataset size due to the
-;;; logarithmic graph depth.
-;;;
-;;; Note: The function uses global parameters *M*, *ef-construction*, and
-;;; *max-level*. All must be set appropriately before insertion operations.
+  "Find k nearest neighbors using HNSW greedy descent search. Returns list of node IDs."
+  (let* ((metric-fn (hnsw-index-metric-fn index))
+         (entry-id (hnsw-index-entry-point index))
+         (nodes-ht (hnsw-index-nodes index))
+         (entry (gethash entry-id nodes-ht))
+         (max-level (hnsw-index-max-level index))
+         (result '())
+         (visited (make-hash-table)))
+    (when (or (null entry) (zerop (hash-table-count (hnsw-index-nodes index))))
+      (return-from hnsw-search nil))
+    
+    ;; Phase 1: Greedy descent from max-level to level 1
+    (loop for level from max-level downto 1 do
+      (setf entry (greedy-descent index query-vec (hnsw-node-id entry) level metric-fn visited)))
+    
+    ;; Phase 2: Best-first search at level 0 with ef candidate limit
+    (when entry
+      (let* ((entry-node entry)
+             (entry-dist (funcall metric-fn (hnsw-node-vector entry-node) query-vec))
+             (candidates (list (list entry-dist entry-node)))
+             (best (list (list entry-dist entry-node))))
+        (setf (gethash (hnsw-node-id entry) visited) t)
+        
+        (loop while candidates do
+          (let ((cdist (caar candidates)))
+            (when (> cdist (caar (last best)))
+              (return))
+            (pop candidates)
+            (let* ((node (cadar candidates))
+                   (neighbors (get-neighbors node 0 index)))
+              ;; Explore neighbors
+              (dolist (n-id neighbors)
+                (unless (gethash n-id visited)
+                  (setf (gethash n-id visited) t)
+                  (let* ((n (gethash n-id (hnsw-index-nodes index)))
+                         (ndist (funcall metric-fn (hnsw-node-vector n) query-vec)))
+                    (when (< ndist (caar (last best)))
+                      (push (list ndist n) best)
+                      (push (list ndist n) candidates))))))))
+        
+        ;; Sort by distance, return top k
+        (let ((sorted (sort best #'< :key #'first)))
+          (loop for i from 0 below (min k (length sorted))
+                collect (second (nth i sorted))))))))
 
-;;; ============================================================================
-;;; hnsw-search (original definition)
-;;; ============================================================================
-;;;
-;;; Find k nearest neighbors using HNSW greedy descent search.
-;;;
-;;; Algorithm:
-;;;   1. Set ef to *ef-search* for candidate collection
-;;;   2. Search the HNSW layer structure starting from entry-point
-;;;   3. Collect all candidates within the ef search boundary
-;;;   4. Sort candidates by distance to query vector
-;;;   6. Return top-k results (or fewer if fewer than k nodes exist)
-;;
-;;; Arguments:
-;;;   index    - hnw-index struct (must be initialized with nodes)
-;;;   vector   - Query vector (simple-array single-float, dimension dim)
-;;;   k        - Number of neighbors to return (fixnum, default: 10)
-;;
-;;; Returns: Vector of up to k hnsw-node structs, sorted by distance
-;;;          (closest first). Vector is empty if no nodes in index.
-;;
-;;; Algorithm Details:
-;;;   The HNSW search procedure:
-;;;   1. Start at entry-point node, set current layer to max-level
-;;;   2. Perform greedy descent at current layer:
-;;;      a. Examine all neighbors of current node
-;;;      b. Move to closest neighbor if it improves distance
-;;;      c. Otherwise, mark current position and descend to next layer
-;;;   3. Collect all nodes visited during descent as candidates
-;;;   4. After reaching layer 0, sort candidates by distance
-;;;   5. Return top-k from sorted candidates, respecting ef-search limit
-;;
-;;;   The ef-search parameter controls how many candidates are maintained
-;;;   during search. Larger ef values improve accuracy at the cost of speed.
-;;;   Typical values: 10-100 depending on accuracy requirements.
-;;;
-;;; Performance: O(log N) expected per query with proper ef parameter.
-;;; The search time is largely independent of dataset size due to the
-;;; multi-layer graph structure and greedy descent navigation.
-;;;
-;;; Note: Uses global parameters *ef-search*, *M*, and the index's
-;;; metric-fn. Results are approximate; exact NN would require linear scan.
-
-(provide :hnsw-spike)
+;; EOF

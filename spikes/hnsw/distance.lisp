@@ -22,7 +22,8 @@
           (- 1.0 (/ dot norms))))))
 
 (defun l2-distance (v1 v2)
-  (declare (type (simple-array single-float (*)) v1 v2)(optimize (speed 3) (space 0) (debug 0)))
+  (declare (type (simple-array single-float (*)) v1 v2)
+           (optimize (speed 3) (space 0) (debug 0)))
   (let ((sum 0.0)
         (len (length v1)))
     (dotimes (i len)
@@ -31,7 +32,8 @@
     (sqrt sum)))
 
 (defun dot-distance (v1 v2)
-  (declare (type (simple-array single-float (*)) v1 v2)(optimize (speed 3) (space 0) (debug 0)))
+  (declare (type (simple-array single-float (*)) v1 v2)
+           (optimize (speed 3) (space 0) (debug 0)))
   (let ((sum 0.0)
         (len (length v1)))
     (dotimes (i len)

@@ -1,7 +1,7 @@
 (in-package :cl-user)
 
 (defpackage :hnsw-spike.runner
-  (:use :cl :hnsw-spike.core)
+  (:use :cl :hnsw-spike.core :hnsw-spike)
   (:export :generate-random-vectors :run-hnsw-spike))
 
 (in-package :hnsw-spike.runner)

@@ -16,7 +16,7 @@
   (format t "Parameters: M=~D, efConstruction=~D, efSearch=~D~%"
           *M* *ef-construction* *ef-search*)
   
-  (let* ((index (create-hnsw-index dim :cosine))
+  (let* ((index (create-hnsw-index dim :metric :cosine))
          (vectors (generate-random-vectors vector-count dim))
          (query-vectors (generate-random-vectors 100 dim)))
     
