@@ -46,7 +46,10 @@
   ;; MVCC: per-type override for how many prior versions the reaper retains.
   ;; NIL = inherit the graph-level schema default.  Appended last for cl-store
   ;; restore compatibility with pre-MVCC schema.dat.
-  (keep-revisions nil))
+  (keep-revisions nil)
+  ;; Embedding configuration for HNSW vector search
+  (embedding-slot-name nil :type (or null string))
+  (embedding-compressed-p nil :type boolean))
 
 (defgeneric instantiate-node-type (node-type-def graph))
 

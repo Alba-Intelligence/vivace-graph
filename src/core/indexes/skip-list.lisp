@@ -122,7 +122,12 @@ L1: 50%, L2: 25%, L3: 12.5%, ..."
   pointers
   flags
   (head-p nil)
-  (tail-p nil))
+  (tail-p nil)
+  (embedding nil :type (array (unsigned-byte 8)) :documentation "Vector embedding for HNSW similarity search. Stored as raw bytes; length is encoded inline when non-nil.")
+  ;; Metadata for embeddings
+  (embedding-dim 0 :type (unsigned-byte 32) :documentation "Embedding dimension (number of components)")
+  (embedding-precision 'float32 :type keyword :documentation "Precision type: 'float32 or 'float16 or 'quantized-8")
+  (embedding-storage 'inline :type keyword :documentation "Storage strategy: 'inline or 'external-reference"))
 
 (defun make-skip-node (skip-list key value level &optional pointers)
   (assert (and (>= level 0) (<= level 255)))

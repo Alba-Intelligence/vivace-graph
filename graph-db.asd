@@ -52,6 +52,8 @@
                (:file "src/core/base/node-id" :depends-on ("src/core/base/package" "src/core/memory/posix"))
                (:file "src/core/storage/buffer-pool" :depends-on ("src/core/storage/pcons" "src/core/base/node-id"))
                (:file "src/core/storage/serialize" :depends-on ("src/core/base/conditions" "src/core/storage/buffer-pool" "src/core/base/cl-store-ecl"))
+                (:file "src/core/storage/serialize-embeddings" :depends-on ("src/core/storage/serialize" "src/core/base/globals"))
+                (:file "src/core/indexes/hnsw-index" :depends-on ("src/core/storage/serialize-embeddings" "src/core/base/globals" "src/core/indexes/skip-list"))
                (:file "src/spatial/geometry/geometry" :depends-on ("src/core/storage/serialize"))
                (:file "src/spatial/geometry/geometry-ops" :depends-on ("src/spatial/geometry/geometry"))
                (:file "src/spatial/geometry/geohash" :depends-on ("src/core/base/package"))

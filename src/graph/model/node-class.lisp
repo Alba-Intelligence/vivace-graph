@@ -217,7 +217,7 @@ is preserved."
    (type-id :accessor type-id :initform 1 :initarg :type-id :meta t
             :type (unsigned-byte 16) :persistent nil)
    (revision :accessor revision :initform 0 :initarg :revision :meta t
-             :type (unsigned-byte 32) :persistent nil)
+            :type (unsigned-byte 32) :persistent nil)
    (%revision-table :accessor %revision-table :initform (make-hash-table :test 'eq)
                     :initarg :revision-table :meta t :persistent nil)
    (heap-written-p :accessor heap-written-p :initform nil :initarg :heap-written-p
@@ -227,13 +227,13 @@ is preserved."
    (ve-written-p :accessor ve-written-p :initform nil :initarg :ve-written-p
                  :type boolean :meta t :persistent nil)
    (vev-written-p :accessor vev-written-p :initform nil :initarg :vev-written-p
-                  :type boolean :meta t :persistent nil)
+                 :type boolean :meta t :persistent nil)
    (views-written-p :accessor views-written-p :initform nil :meta t
                     :initarg :views-written-p :type boolean :persistent nil)
    (written-p :accessor written-p :initform nil :initarg :written-p :type boolean
-              :meta t :persistent nil)
+               :meta t :persistent nil)
    (data-pointer :accessor data-pointer :initform 0 :initarg :data-pointer
-                 :type (unsigned-byte 64) :meta t :persistent nil)
+                  :type (unsigned-byte 64) :meta t :persistent nil)
    ;; MVCC (v2 head): commit-epoch = the committing transaction-id when this
    ;; version was written (global monotonic; for snapshot reads + the reaper).
    ;; prev-pointer = LOCAL heap address of the previous version's archived head
@@ -244,6 +244,16 @@ is preserved."
                  :type (unsigned-byte 64) :meta t :persistent nil)
    (deleted-p :accessor deleted-p :initform nil :initarg :deleted-p :type boolean
               :meta t :persistent nil)
+   ;; Embedding configuration for HNSW vector search
+   (embedding :accessor embedding :initform nil :initarg :embedding
+              :type (or null simple-array) :meta t :persistent nil)
+   (embedding-dim :accessor embedding-dim :initform 0 :initarg :embedding-dim
+                 :type (unsigned-byte 32) :meta t :persistent nil)
+   (embedding-precision :accessor embedding-precision :initform :float32
+                        :type keyword :meta t :persistent nil)
+   (embedding-compressed-p :accessor embedding-compressed-p :initform nil
+                           :initarg :embedding-compressed-p :type boolean
+                           :meta t :persistent nil)
    (data :accessor data :initarg :data :initform nil :meta t :persistent nil)
    (bytes :accessor bytes :initform :init :initarg :bytes :meta t :persistent nil))
-  (:metaclass node-class))
+   (:metaclass node-class))

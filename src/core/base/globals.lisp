@@ -165,6 +165,18 @@ application's own config; graph-db does not read an ini file itself.")
 (alexandria:define-constant +timestamp+ 101)
 (alexandria:define-constant +geometry+ 102) ;; spatial extension (see geometry.lisp)
 
+;; Embedding serialization type tags (HNSW vector search)
+;; These follow the existing type-tag scheme (user-defined start at 100).
+;; float32/float16/bfloat16/int8 are the supported precisions for vector embeddings.
+(alexandria:define-constant +embedding-float32+ 110)
+(alexandria:define-constant +embedding-float16+ 111)
+(alexandria:define-constant +embedding-bfloat16+ 112)
+(alexandria:define-constant +embedding-int8+ 113)
+
+;; HNSW index structures (type tags for serialization)
+(alexandria:define-constant +hnsw-node+ 120)
+(alexandria:define-constant +hnsw-index+ 121)
+
 ;; GEOS availability flags.  These are inert in core graph-db (no FFI, no libgeos
 ;; dependency).  The OPTIONAL `graph-db/geos' add-on system flips them at load
 ;; time when it successfully binds libgeos_c; the spatial refine seam
