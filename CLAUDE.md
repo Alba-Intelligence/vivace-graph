@@ -17,18 +17,18 @@ This is an ASDF system loaded through Quicklisp; there is no separate build step
 (in-package :graph-db)
 ```
 
-Dependencies (bordeaux-threads, alexandria, cffi, osicat, uuid, cl-store, hunchentoot, ningle, clack, log4cl, usocket, etc.) must be resolvable by Quicklisp/ASDF. `osicat` and `cffi` mean a working C toolchain is required (the mmap layer binds `mmap`/`munmap`).
+Dependencies (bordeaux-threads, alexandria, cffi, uuid, cl-store, hunchentoot, ningle, clack, log4cl, usocket, etc.) must be resolvable by Quicklisp/ASDF. `cffi` means a working C toolchain is required (the mmap layer binds `mmap`/`munmap`). `posix.lisp` hand-rolls the POSIX calls the embeddable core needs via raw CFFI, replacing an earlier `osicat` dependency there — `osicat` ships a C grovel/wrapper that complicated cross-compilation, so it survives only in the ad-hoc `test-lhash.lisp` REPL exercise, not the loaded system.
 
 **Component load order matters.** `graph-db.asd` encodes a strict dependency chain from the storage primitives up to the query/REST layers; if you add a file, place it in the right position and declare its `:depends-on`.
 
-`example.lisp` is the canonical end-to-end walkthrough (schema definition → views → transactional inserts → queries) and is the best starting point for understanding the public API.
+`examples/example.lisp` is the canonical end-to-end walkthrough (schema definition → views → ordered/unique/vector indexes → transactional inserts → queries → spatial) and is the best starting point for understanding the public API. `examples/example-spacetime.lisp` walks the spacetime claim subsystem; `examples/runtime-schema-example.lisp` documents runtime-defined types (it is documentation, not loadable). Both loadable examples are smoke-tested by loading them in a fresh image.
 
 `docs/vivace-graph-v3-doc.org` is a full developer's manual (storage engine, object model, transactions, Prolog queries, views, REST, replication, backup/recovery, API reference). Originally written by Gwang-Jin Kim (@gwangjinkim) and adopted into this repo; keep it in sync when behavior changes.
 
 ## Tests
 
 **There IS an automated test framework** — FiveAM, ~50 files across `tests/` and its
-subdirectories, **3,359 checks** as of 2026-08-08. Run a suite through ASDF:
+subdirectories, **5,154 checks** as of 2026-08-31. Run a suite through ASDF:
 
 ```
 (asdf:test-system :graph-db)              ; the main suite
@@ -40,6 +40,12 @@ subdirectories, **3,359 checks** as of 2026-08-08. Run a suite through ASDF:
 **SBCL needs `--dynamic-space-size 16384`** to run a suite. The default 1 GiB heap dies
 with "Heap exhausted, game over" partway in — `make-graph`'s type index eagerly builds
 131,072 index-lists, and a suite creates many graphs in one image.
+
+Two perf measurement systems coexist — `tests/perf/` (throughput trends, "did it
+get slower?") vs `profiling/` ("why is it slow?" — sprof/sb-profile harness).
+The split and how to run each is Chapter 19 of `docs/vivace-graph-v3-doc.org`;
+regression checking (per-host/per-generation baselines, `check-perf`) is
+documented in `docs/perf-baselines.md`.
 
 Each `test-op` errors on failure, so they are safe to gate on. Run the main suite before
 committing an engine change; the app that consumes this engine has its own 5115-check suite
@@ -63,19 +69,34 @@ To run one, e.g.:
 (test-alloc)
 ```
 
-Tests write scratch databases under `/var/tmp/`; clean those up between runs if state seems stale.
+Scratch locations differ between the two generations of tests:
+
+- **FiveAM suites** put all scratch under one per-run parent,
+  `$TMPDIR/graph-db-test-run-<tag>/` (shared `graph-db/test-scratch` system,
+  GH #214). Each runner deletes its parent on exit, and suite start sweeps the
+  temp root for scratch older than 24 hours (a whitelist of `graph-db-*`,
+  `gda-*`, `vgseg-*`, `vgquery-*` name prefixes; symlinks skipped) — so stale
+  trees from killed runs clean themselves up. Manual cleanup if ever needed —
+  note these globs are broader than the sweep's exact whitelist, so check
+  nothing else of yours matches first:
+  `rm -rf ${TMPDIR:-/tmp}/graph-db-* ${TMPDIR:-/tmp}/gda-*
+  ${TMPDIR:-/tmp}/vgseg-* ${TMPDIR:-/tmp}/vgquery-*`.
+- **The ad-hoc REPL exercises above** write scratch databases under
+  `/var/tmp/` (e.g. `/var/tmp/graph/`); clean those up between runs if state
+  seems stale — nothing sweeps them.
 
 ## Architecture (bottom-up)
 
 The system is layered. Lower layers know nothing of graph semantics; higher layers build on them.
 
-1. **Storage primitives** — `mmap.lisp` (CFFI/osicat memory-mapped files, with SEGV-retry `:around` methods on `set-byte`/`get-byte`), `allocator.lisp` (binned heap allocator over an mmap'd region), `buffer-pool.lisp`, `serialize.lisp` (custom binary (de)serialization; type tag bytes are defined in `globals.lisp`), `pcons.lisp`/`pmem.lisp` (persistent cons cells).
+1. **Storage primitives** — `mmap.lisp` (CFFI memory-mapped files, with SEGV-retry `:around` methods on `set-byte`/`get-byte`), `posix.lisp` (hand-rolled CFFI bindings for the POSIX calls the embeddable core needs, replacing `osicat` there), `allocator.lisp` (binned heap allocator over an mmap'd region), `buffer-pool.lisp`, `serialize.lisp` (custom binary (de)serialization; type tag bytes are defined in `globals.lisp`), `pcons.lisp`/`pmem.lisp` (persistent cons cells).
 2. **On-disk collections** — `linear-hash.lisp` (linear hashing, the main key→offset table), `skip-list.lisp` + `skip-list-cursors.lisp`, `index-list.lisp`.
 3. **Graph indexes** — `ve-index.lisp` (vertex↔edge adjacency, in/out), `vev-index.lisp` (vertex-edge-vertex), `type-index.lisp` (nodes by type). A graph keeps separate `ve-index-in`, `ve-index-out`, and `vev-index` instances.
 4. **Graph model** — `graph-class.lisp`/`graph.lisp` (the `graph`/`master-graph`/`slave-graph` classes and `make-graph`/`open-graph`/`close-graph`), `schema.lisp` (node-type registry, per-class rw-locks), `node-class.lisp` + `primitive-node.lisp` + `vertex.lisp` + `edge.lisp` (the MOP-based persistent object model), `views.lisp` (map/map-reduce indexes), `gc.lisp`.
 5. **Transactions** — `transactions.lisp` (ACID with read-set/write-set validation and retry; `*maximum-transaction-attempts*` then exclusive lock), `transaction-restore.lisp`, `transaction-log-streaming.lisp`, `transaction-streaming.lisp`. Replication: `backup.lisp`, `replication.lisp`, `txn-log.lisp`.
 6. **Query** — a full embedded Prolog engine: `functor.lisp`, `prologc.lisp` (compiler), `prolog-functors.lisp` (built-in predicates). `select` / `select-flat` / `select-one` / `do-query` are the query entry points. `interface.lisp` + `traverse.lisp` provide the Lisp-method query API (`map-vertices`, `map-edges`, `traverse`, `outgoing-edges`, etc.).
 7. **REST** — `rest.lisp` exposes the graph over HTTP (hunchentoot/ningle/clack); `start-rest` / `stop-rest` / `def-rest-procedure`.
+8. **GUI** — optional `graph-db/gui` subsystem (`gui/`): the web cockpit backend (`start-gui`/`stop-gui`, roster/stats/explorer JSON API + static assets); separate from `rest.lisp`, tested by `graph-db/gui-test` over real HTTP (GH #269).
 
 ### On-disk layout
 
@@ -85,7 +106,7 @@ Each graph is a directory. `make-graph`/`open-graph` create/expect: `heap.dat`, 
 
 ### Defining and using a graph (public API shape)
 
-- Schema is defined with `def-vertex` / `def-edge` (CLOS-like, with typed slots and single inheritance), associated with a named graph. See `example.lisp`.
+- Schema is defined with `def-vertex` / `def-edge` (CLOS-like, with typed slots and single inheritance), associated with a named graph. See `examples/example.lisp`.
 - `def-view` defines secondary indexes; the `:map` lambda calls `yield`, and an optional `:reduce` lambda makes it a map-reduce view. Query views with `invoke-graph-view` / `map-view` / `map-reduced-view`.
 - All mutations go through `with-transaction`. `make-<type>` constructors, `save`, `update-node`, `delete-node`/`mark-deleted` operate inside a transaction.
 - `*graph*` is the dynamically-bound "current graph" used by most operations when no explicit graph is passed.
@@ -94,5 +115,4 @@ Each graph is a directory. `make-graph`/`open-graph` create/expect: `heap.dat`, 
 
 - The compatibility note in `README.md` (2016-12-12) records a breaking change to the UUID/hash scheme: graphs created before commit `58f87d6` are incompatible and must be re-loaded via snapshot + `replay`.
 - Concurrency uses bordeaux-threads plus a custom `rw-lock.lisp` (SBCL/LispWorks/ECL; CCL uses its native `make-read-write-lock` via shims in `utilities.lisp`); per-class and per-view rw-locks are managed via `with-write-locked-class` / `with-read-locked-class` / `with-*-locked-view-group`.
-- Logging is log4cl (`log:info`, `log:error`, …); `example.lisp` shows configuring it to `/var/tmp/graph.log`.
-- `demo/` contains an external application (`social-shopping`) that depends on `graph-db` — it is illustrative usage, not part of this system, and pulls in many extra dependencies.
+- Logging is log4cl (`log:info`, `log:error`, …); `examples/example.lisp` shows configuring it to `/var/tmp/graph.log`.
